@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  user-service:
+    build: ./user-service
+    ports:
+      - "3001:3001"
+    environment:
+      - FLASK_DEBUG=1
+    depends_on:
+      - user-db
+
+  product-service:
+    build: ./product-service
+    ports:
+      - "3002:3002"
+    environment:
+      - FLASK_DEBUG=1
+    depends_on:
+      - product-db
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - user-service
+      - product-service
+
+  user-db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: user_db
+    volumes:
+      - user-data:/var/lib/postgresql/data
+
+  product-db:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: product
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: product_db
+    volumes:
+      - product-data:/var/lib/postgresql/data
+
+volumes:
+  user-data:
+  product-data:
