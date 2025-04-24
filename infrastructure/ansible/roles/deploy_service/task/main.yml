@@ -1,23 +1,54 @@
 - name: Instalar Docker y dependencias
   apt:
-    name: ['docker.io', 'docker-compose', 'git', 'python3-pip']
+    name:
+      - docker.io
+      - docker-compose
+      - git
+      - python3-pip
+      - postgresql-client
     state: present
     update_cache: yes
+
+- name: Instalar dependencias Python para microservicios
+  pip:
+    requirements: "{{ item }}"
+    executable: pip3
+  with_items:
+    - "../../../../user-service/requirements.txt"
+    - "../../../../product-service/requirements.txt"
 
 - name: Copiar código de microservicios
   synchronize:
     src: "{{ item }}"
     dest: "/home/{{ ansible_user }}/"
   with_items:
-    - ../../../../user-service
-    - ../../../../product-service
+    - "../../../../user-service"
+    - "../../../../product-service"
 
 - name: Copiar docker-compose.yml
   template:
-    src: docker-compose.yml.j2
+    src: "docker-compose.yml.j2"
     dest: "/home/{{ ansible_user }}/docker-compose.yml"
     owner: "{{ ansible_user }}"
     mode: 0644
+
+- name: Crear archivo .env para user-service
+  copy:
+    dest: "/home/{{ ansible_user }}/user-service/.env"
+    content: |
+      DB_USER={{ db_user }}
+      DB_PASSWORD={{ db_password }}
+      DB_HOST={{ user_db_endpoint }}
+      DB_NAME=user_db
+
+- name: Crear archivo .env para product-service
+  copy:
+    dest: "/home/{{ ansible_user }}/product-service/.env"
+    content: |
+      DB_USER={{ db_user }}
+      DB_PASSWORD={{ db_password }}
+      DB_HOST={{ product_db_endpoint }}
+      DB_NAME=product_db
 
 - name: Levantar servicios
   shell: docker-compose up -d

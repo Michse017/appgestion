@@ -35,6 +35,27 @@ resource "aws_security_group" "ssh_access" {
   }
 }
 
+resource "aws_security_group" "rds_access" {
+  name        = "allow_ec2_to_rds"
+  description = "Allow EC2 instances to access RDS"
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description      = "PostgreSQL from EC2"
+    from_port        = 5432
+    to_port          = 5432
+    protocol         = "tcp"
+    security_groups  = [aws_security_group.ssh_access.id]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"]
@@ -72,6 +93,7 @@ resource "aws_db_instance" "user_db" {
   password                = var.db_password
   skip_final_snapshot     = true
   publicly_accessible     = true
+  vpc_security_group_ids  = [aws_security_group.rds_access.id]
 }
 
 resource "aws_db_instance" "product_db" {
@@ -84,6 +106,7 @@ resource "aws_db_instance" "product_db" {
   password                = var.db_password
   skip_final_snapshot     = true
   publicly_accessible     = true
+  vpc_security_group_ids  = [aws_security_group.rds_access.id]
 }
 
 output "user_service_ips" {
