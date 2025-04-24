@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  {% if inventory_hostname in groups['user_service'] %}
+  user-service:
+    build: /home/{{ ansible_user }}/user-service
+    environment:
+      - DB_HOST={{ user_db_endpoint }}
+      - DB_USER={{ db_user }}
+      - DB_PASSWORD={{ db_password }}
+      - DB_NAME=user_db
+    ports:
+      - "3001:3001"
+  {% endif %}
+
+  {% if inventory_hostname in groups['product_service'] %}
+  product-service:
+    build: /home/{{ ansible_user }}/product-service
+    environment:
+      - DB_HOST={{ product_db_endpoint }}
+      - DB_USER={{ db_user }}
+      - DB_PASSWORD={{ db_password }}
+      - DB_NAME=product_db
+    ports:
+      - "3002:3002"
+  {% endif %}

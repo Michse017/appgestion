@@ -1,0 +1,5 @@
+key_name        = "NOMBRE_DE_TU_LLAVE_EC2"
+db_user         = "admin"
+db_password     = "SuperSecretPassword"
+ssh_private_key = "/ruta/a/tu/llave.pem"
+ansible_user    = "ubuntu"

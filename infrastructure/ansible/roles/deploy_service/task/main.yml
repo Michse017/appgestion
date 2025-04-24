@@ -1,0 +1,30 @@
+- name: Instalar Docker
+  apt:
+    name: docker.io
+    state: present
+    update_cache: yes
+
+- name: Instalar Docker Compose
+  apt:
+    name: docker-compose
+    state: present
+
+- name: Copiar código del microservicio
+  synchronize:
+    src: "{{ item }}"
+    dest: "/home/{{ ansible_user }}/"
+  with_items:
+    - ../../../../user-service
+    - ../../../../product-service
+
+- name: Copiar docker-compose.yml
+  template:
+    src: docker-compose.yml.j2
+    dest: "/home/{{ ansible_user }}/docker-compose.yml"
+    owner: "{{ ansible_user }}"
+    mode: 0644
+
+- name: Levantar servicios
+  shell: docker-compose up -d
+  args:
+    chdir: "/home/{{ ansible_user }}"
