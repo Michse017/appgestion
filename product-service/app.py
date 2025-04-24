@@ -1,12 +1,18 @@
 from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
+import os
 
 app = Flask(__name__)
 CORS(app)
 
 # Configuración PostgreSQL
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://product:password@product-db:5432/product_db'
+db_user = os.environ.get("DB_USER", "product")
+db_password = os.environ.get("DB_PASSWORD", "password")
+db_host = os.environ.get("DB_HOST", "localhost")
+db_name = os.environ.get("DB_NAME", "product_db")
+
+app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{db_user}:{db_password}@{db_host}:5432/{db_name}'
 db = SQLAlchemy(app)
 
 # Modelo

@@ -19,6 +19,14 @@ resource "aws_security_group" "ssh_access" {
     cidr_blocks = ["${var.my_public_ip}/32"]
   }
 
+  ingress {
+    description = "App"
+    from_port   = 3001
+    to_port     = 3002
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0

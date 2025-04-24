@@ -1,15 +1,10 @@
-- name: Instalar Docker
+- name: Instalar Docker y dependencias
   apt:
-    name: docker.io
+    name: ['docker.io', 'docker-compose', 'git', 'python3-pip']
     state: present
     update_cache: yes
 
-- name: Instalar Docker Compose
-  apt:
-    name: docker-compose
-    state: present
-
-- name: Copiar código del microservicio
+- name: Copiar código de microservicios
   synchronize:
     src: "{{ item }}"
     dest: "/home/{{ ansible_user }}/"
