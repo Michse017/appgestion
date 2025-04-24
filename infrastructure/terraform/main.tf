@@ -16,7 +16,7 @@ resource "aws_security_group" "ssh_access" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["YOUR_PUBLIC_IP/32"] # Cambia esto por tu IP pública
+    cidr_blocks = ["${var.my_public_ip}/32"]
   }
 
   egress {
