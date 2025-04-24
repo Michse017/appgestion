@@ -14,7 +14,7 @@ data "aws_ami" "ubuntu" {
 resource "aws_instance" "user_service" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = "t3.micro"
-  count         = 2
+  count         = 1
   key_name      = var.key_name
   tags = { Name = "user-service-${count.index}" }
 }
@@ -22,7 +22,7 @@ resource "aws_instance" "user_service" {
 resource "aws_instance" "product_service" {
   ami           = data.aws_ami.ubuntu.id
   instance_type = "t3.micro"
-  count         = 2
+  count         = 1
   key_name      = var.key_name
   tags = { Name = "product-service-${count.index}" }
 }
