@@ -32,7 +32,7 @@ resource "aws_db_instance" "user_db" {
   engine                  = "postgres"
   instance_class          = "db.t3.micro"
   allocated_storage       = 20
-  name                    = "user_db"
+  db_name                 = "user_db"
   username                = var.db_user
   password                = var.db_password
   skip_final_snapshot     = true
@@ -44,7 +44,7 @@ resource "aws_db_instance" "product_db" {
   engine                  = "postgres"
   instance_class          = "db.t3.micro"
   allocated_storage       = 20
-  name                    = "product_db"
+  db_name                 = "product_db"
   username                = var.db_user
   password                = var.db_password
   skip_final_snapshot     = true
