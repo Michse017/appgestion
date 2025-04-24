@@ -2,6 +2,31 @@ provider "aws" {
   region = var.aws_region
 }
 
+data "aws_vpc" "default" {
+  default = true
+}
+
+resource "aws_security_group" "ssh_access" {
+  name        = "allow_ssh"
+  description = "Allow SSH inbound traffic"
+  vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["YOUR_PUBLIC_IP/32"] # Cambia esto por tu IP pública
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"]
@@ -12,18 +37,20 @@ data "aws_ami" "ubuntu" {
 }
 
 resource "aws_instance" "user_service" {
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = "t3.micro"
-  count         = 1
-  key_name      = var.key_name
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = "t3.micro"
+  count                  = 1
+  key_name               = var.key_name
+  vpc_security_group_ids = [aws_security_group.ssh_access.id]
   tags = { Name = "user-service-${count.index}" }
 }
 
 resource "aws_instance" "product_service" {
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = "t3.micro"
-  count         = 1
-  key_name      = var.key_name
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = "t3.micro"
+  count                  = 1
+  key_name               = var.key_name
+  vpc_security_group_ids = [aws_security_group.ssh_access.id]
   tags = { Name = "product-service-${count.index}" }
 }
 
