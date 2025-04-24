@@ -1,0 +1,8 @@
+{
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "scripts": {
+  "start": "concurrently \"cd user-service && python app.py\" \"cd product-service && python app.py\" \"cd frontend && npm start\""
+}
+}

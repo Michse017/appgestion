@@ -6,7 +6,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuración PostgreSQL
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://product:password@product-db:5432/product_db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://product:password@localhost:5432/product_db'
 db = SQLAlchemy(app)
 
 # Modelo
