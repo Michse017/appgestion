@@ -1,23 +1,59 @@
 version: '3.8'
 
+# Definición de redes aisladas para mayor seguridad
+networks:
+  frontend-network:
+    driver: bridge
+  backend-network:
+    driver: bridge
+  db-network:
+    driver: bridge
+    internal: true  # Esta red no es accesible desde el exterior
+
 services:
   user-service:
     build: ./user-service
     ports:
       - "3001:3001"
     environment:
-      - FLASK_DEBUG=1
+      - FLASK_DEBUG=0  # Cambiado a 0 para producción
+      - POSTGRES_HOST=user-db
+      - POSTGRES_DB=${USER_DB_NAME:-user_db}
+      - POSTGRES_USER=${USER_DB_USER:-user}
+      - POSTGRES_PASSWORD=${USER_DB_PASSWORD:-password}
     depends_on:
       - user-db
+    networks:
+      - backend-network
+      - db-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   product-service:
     build: ./product-service
     ports:
       - "3002:3002"
     environment:
-      - FLASK_DEBUG=1
+      - FLASK_DEBUG=0  # Cambiado a 0 para producción
+      - POSTGRES_HOST=product-db
+      - POSTGRES_DB=${PRODUCT_DB_NAME:-product_db}
+      - POSTGRES_USER=${PRODUCT_DB_USER:-product}
+      - POSTGRES_PASSWORD=${PRODUCT_DB_PASSWORD:-password}
     depends_on:
       - product-db
+    networks:
+      - backend-network
+      - db-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   frontend:
     build: ./frontend
@@ -26,24 +62,59 @@ services:
     depends_on:
       - user-service
       - product-service
+    networks:
+      - frontend-network
+      - backend-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
   user-db:
     image: postgres:13
     environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: user_db
+      POSTGRES_USER: ${USER_DB_USER:-user}
+      POSTGRES_PASSWORD: ${USER_DB_PASSWORD:-password}
+      POSTGRES_DB: ${USER_DB_NAME:-user_db}
     volumes:
       - user-data:/var/lib/postgresql/data
+    networks:
+      - db-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${USER_DB_USER:-user} -d ${USER_DB_NAME:-user_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   product-db:
     image: postgres:13
     environment:
-      POSTGRES_USER: product
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: product_db
+      POSTGRES_USER: ${PRODUCT_DB_USER:-product}
+      POSTGRES_PASSWORD: ${PRODUCT_DB_PASSWORD:-password}
+      POSTGRES_DB: ${PRODUCT_DB_NAME:-product_db}
     volumes:
       - product-data:/var/lib/postgresql/data
+    networks:
+      - db-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PRODUCT_DB_USER:-product} -d ${PRODUCT_DB_NAME:-product_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   user-data:

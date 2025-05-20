@@ -1,0 +1,114 @@
+---
+# Tareas principales para el rol appgestion
+
+- name: Instalar dependencias de Docker
+  apt:
+    name:
+      - docker.io
+      - docker-compose
+    state: present
+
+- name: Asegurar que Docker está iniciado y habilitado
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Crear grupos de redes Docker
+  shell: |
+    docker network ls | grep {{ item }} || docker network create {{ item }}
+  changed_when: false
+  with_items:
+    - frontend-network
+    - backend-network
+    - db-network
+
+- name: Instalar boto3 para AWS
+  pip:
+    name:
+      - boto3
+      - botocore
+    state: present
+
+- name: Obtener credenciales de base de datos desde AWS Secrets Manager
+  shell: |
+    aws secretsmanager get-secret-value \
+      --region {{ aws_region }} \
+      --secret-id {{ project_name }}-db-credentials \
+      --query SecretString \
+      --output text
+  register: db_credentials_json
+  no_log: true
+  changed_when: false
+
+- name: Parsear credenciales DB a variables
+  set_fact:
+    db_creds: "{{ db_credentials_json.stdout | from_json }}"
+  no_log: true
+
+- name: Obtener credenciales de DockerHub desde AWS Secrets Manager
+  shell: |
+    aws secretsmanager get-secret-value \
+      --region {{ aws_region }} \
+      --secret-id {{ project_name }}-docker-credentials \
+      --query SecretString \
+      --output text
+  register: docker_credentials_json
+  no_log: true
+  changed_when: false
+
+- name: Parsear credenciales Docker a variables
+  set_fact:
+    docker_creds: "{{ docker_credentials_json.stdout | from_json }}"
+  no_log: true
+
+- name: Login en DockerHub
+  shell: |
+    echo '{{ docker_creds.password }}' | docker login -u '{{ docker_creds.username }}' --password-stdin
+  no_log: true
+  changed_when: false
+
+- name: Crear archivo .env con variables de entorno
+  template:
+    src: .env.j2
+    dest: "{{ app_dir }}/.env"
+    owner: root
+    group: root
+    mode: '0600'
+
+- name: Crear docker-compose.yml
+  template:
+    src: docker-compose.yml.j2
+    dest: "{{ app_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Detener contenedores existentes (si los hay)
+  shell: "cd {{ app_dir }} && docker-compose down"
+  ignore_errors: yes
+  changed_when: false
+
+- name: Iniciar contenedores con docker-compose
+  shell: "cd {{ app_dir }} && docker-compose up -d"
+  register: docker_compose_up
+  changed_when: docker_compose_up.rc == 0
+
+- name: Esperar que los servicios estén disponibles
+  wait_for:
+    host: localhost
+    port: "{{ item }}"
+    timeout: 300
+    delay: 10
+  with_items:
+    - 3001
+    - 3002
+
+- name: Configurar health checks
+  cron:
+    name: "health_check_{{ item.name }}"
+    minute: "*/5"
+    job: "curl -s http://localhost:{{ item.port }}/health > /dev/null || (cd {{ app_dir }} && docker-compose restart {{ item.name }})"
+  with_items:
+    - { name: "user-service", port: "3001" }
+    - { name: "product-service", port: "3002" }

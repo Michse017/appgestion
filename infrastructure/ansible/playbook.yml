@@ -1,4 +1,47 @@
-- hosts: all
+---
+# Playbook principal para AppGestion
+- name: Configurar servidores para AppGestion
+  hosts: tag_name_appgestion-backend
   become: yes
+  vars:
+    app_dir: /opt/appgestion
+    aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
+    project_name: "{{ lookup('env', 'PROJECT_NAME') | default('appgestion', true) }}"
+    environment: "{{ lookup('env', 'ENVIRONMENT') | default('prod', true) }}"
+
+  pre_tasks:
+    - name: Actualizar caché de apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Instalar dependencias del sistema
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+          - python3-pip
+          - awscli
+          - jq
+        state: present
+
+    - name: Crear directorio de la aplicación
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        mode: '0755'
+
   roles:
-    - deploy_service
+    - appgestion
+
+  post_tasks:
+    - name: Verificar estado de los contenedores
+      shell: "docker ps"
+      register: container_status
+      changed_when: false
+
+    - name: Mostrar información de los contenedores
+      debug:
+        var: container_status.stdout_lines

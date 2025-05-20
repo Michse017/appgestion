@@ -1,0 +1,88 @@
+version: '3.8'
+
+# Definición de redes aisladas para mayor seguridad
+networks:
+  frontend-network:
+    external: true
+  backend-network:
+    external: true
+  db-network:
+    external: true
+
+services:
+  user-service:
+    image: {{ docker_creds.username }}/appgestion-user-service:latest
+    container_name: user-service
+    ports:
+      - "3001:3001"
+    environment:
+      - FLASK_DEBUG=0
+      - POSTGRES_HOST={{ db_creds.host_user }}
+      - POSTGRES_DB={{ db_creds.db_name_user }}
+      - POSTGRES_USER={{ db_creds.username }}
+      - POSTGRES_PASSWORD={{ db_creds.password }}
+      - POSTGRES_PORT={{ db_creds.port }}
+    restart: unless-stopped
+    networks:
+      - backend-network
+      - db-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  product-service:
+    image: {{ docker_creds.username }}/appgestion-product-service:latest
+    container_name: product-service
+    ports:
+      - "3002:3002"
+    environment:
+      - FLASK_DEBUG=0
+      - POSTGRES_HOST={{ db_creds.host_product }}
+      - POSTGRES_DB={{ db_creds.db_name_product }}
+      - POSTGRES_USER={{ db_creds.username }}
+      - POSTGRES_PASSWORD={{ db_creds.password }}
+      - POSTGRES_PORT={{ db_creds.port }}
+    restart: unless-stopped
+    networks:
+      - backend-network
+      - db-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Nginx como proxy inverso para enrutar solicitudes
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - user-service
+      - product-service
+    restart: unless-stopped
+    networks:
+      - frontend-network
+      - backend-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

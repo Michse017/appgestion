@@ -1,0 +1,31 @@
+# Inventario dinámico para AWS EC2
+plugin: aws_ec2
+regions:
+  - "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
+
+# Filtros para encontrar solo instancias del proyecto appgestion
+filters:
+  tag:Environment: "{{ lookup('env', 'ENVIRONMENT') | default('prod', true) }}"
+  tag:Name: "{{ lookup('env', 'PROJECT_NAME') | default('appgestion', true) }}-backend"
+  instance-state-name: running
+
+# Configuración de cache para mejorar rendimiento
+cache: yes
+cache_plugin: jsonfile
+cache_timeout: 300
+cache_connection: /tmp/aws_inventory_cache
+
+# Agrupar instancias por su función
+keyed_groups:
+  - key: tags.Name
+    prefix: tag_name
+    separator: ""
+
+# Crear variables de host desde etiquetas
+hostnames:
+  - dns-name
+  - ip-address
+
+# Configurar nombre de host
+compose:
+  ansible_host: public_ip_address
