@@ -32,12 +32,40 @@ if [ ! -f "infrastructure/terraform/terraform.tfvars" ]; then
   exit 1
 fi
 
-# Verificar que existen las imágenes Docker
+# Verificar que existen las imágenes Docker en DockerHub
 echo -e "${YELLOW}Verificando imágenes Docker...${NC}"
 DOCKERHUB_USER=$(grep dockerhub_username infrastructure/terraform/terraform.tfvars | cut -d '"' -f2)
 
 if [ -z "$DOCKERHUB_USER" ]; then
   echo -e "${RED}Error: No se pudo obtener el usuario de DockerHub${NC}"
+  exit 1
+fi
+
+# Verificar que las imágenes existen en DockerHub
+echo -e "${YELLOW}Verificando disponibilidad de imágenes en DockerHub...${NC}"
+
+check_image() {
+  IMAGE_NAME="$1"
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "https://hub.docker.com/v2/repositories/${DOCKERHUB_USER}/${IMAGE_NAME}/tags/latest")
+  if [ "$HTTP_CODE" -eq 200 ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+for image in "appgestion-user-service" "appgestion-product-service"; do
+  if ! check_image "$image"; then
+    echo -e "${RED}Error: No se encontró la imagen ${DOCKERHUB_USER}/${image}:latest en DockerHub${NC}"
+    echo -e "${YELLOW}¿Olvidaste ejecutar primero ./infrastructure/build_images.sh?${NC}"
+    exit 1
+  fi
+done
+
+# Verificar que el build del frontend existe
+if [ ! -d "frontend/build" ]; then
+  echo -e "${RED}Error: No se encontró el directorio frontend/build${NC}"
+  echo -e "${YELLOW}¿Olvidaste ejecutar primero ./infrastructure/build_images.sh?${NC}"
   exit 1
 fi
 
@@ -87,13 +115,26 @@ fi
 
 terraform apply -auto-approve
 
-# 4. Permitir que las instancias EC2 se inicien completamente
+# 4. Obtener nombre del bucket S3 y subir frontend
+echo -e "${YELLOW}Obteniendo información del bucket S3...${NC}"
+S3_BUCKET=$(terraform output -raw s3_bucket_name 2>/dev/null || echo "")
+
+if [ -n "$S3_BUCKET" ]; then
+  echo -e "${YELLOW}Subiendo frontend al bucket S3: ${S3_BUCKET}${NC}"
+  cd "$PROJECT_ROOT"
+  aws s3 sync ./frontend/build/ s3://${S3_BUCKET}/ --delete
+  echo -e "${GREEN}Frontend desplegado en S3 exitosamente${NC}"
+else
+  echo -e "${YELLOW}No se pudo obtener el nombre del bucket S3, el frontend no se ha desplegado${NC}"
+fi
+
+# 5. Permitir que las instancias EC2 se inicien completamente
 echo -e "${YELLOW}Esperando 60 segundos para permitir que las instancias EC2 se inicialicen...${NC}"
 sleep 60
 
-# 5. Ejecutar Ansible para configurar las instancias
+# 6. Ejecutar Ansible para configurar las instancias
 echo -e "${GREEN}=== Configurando instancias con Ansible ===${NC}"
-cd ../ansible
+cd "$PROJECT_ROOT/infrastructure/ansible"
 
 # Verificar qué tipo de inventario está disponible
 if [ -f "inventory/hosts.ini" ]; then
@@ -107,10 +148,24 @@ else
   exit 1
 fi
 
+# 7. Invalidar caché de CloudFront para refrescar el frontend
+echo -e "${YELLOW}Invalidando caché de CloudFront...${NC}"
+cd "$PROJECT_ROOT/infrastructure/terraform"
+CF_DIST_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
+
+if [ -n "$CF_DIST_ID" ]; then
+  aws cloudfront create-invalidation --distribution-id ${CF_DIST_ID} --paths "/*"
+  echo -e "${GREEN}Caché de CloudFront invalidada exitosamente${NC}"
+else
+  echo -e "${YELLOW}No se pudo obtener el ID de distribución CloudFront${NC}"
+fi
+
 echo -e "${GREEN}=== Despliegue completado con éxito ===${NC}"
 
+# 8. Verificar servicios desplegados
+echo -e "${YELLOW}Verificando servicios desplegados...${NC}"
+
 # Mostrar información de acceso usando los nombres correctos de outputs
-cd ../terraform
 if terraform output -raw frontend_cloudfront_domain &>/dev/null; then
   echo -e "Frontend: https://$(terraform output -raw frontend_cloudfront_domain)"
 elif terraform output -raw frontend_url &>/dev/null; then
@@ -120,7 +175,27 @@ else
 fi
 
 if terraform output -raw api_gateway_invoke_url &>/dev/null; then
-  echo -e "API: $(terraform output -raw api_gateway_invoke_url)"
+  API_URL=$(terraform output -raw api_gateway_invoke_url)
+  echo -e "API: ${API_URL}"
+  
+  # Verificar servicios backend
+  echo -e "${YELLOW}Verificando disponibilidad de endpoints...${NC}"
+  
+  curl -s "${API_URL}/users" > /dev/null
+  if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✅ Servicio de usuarios funcionando correctamente${NC}"
+  else
+    echo -e "${YELLOW}⚠️ Servicio de usuarios no responde${NC}"
+  fi
+  
+  curl -s "${API_URL}/products" > /dev/null
+  if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✅ Servicio de productos funcionando correctamente${NC}"
+  else
+    echo -e "${YELLOW}⚠️ Servicio de productos no responde${NC}"
+  fi
 else
   echo -e "${YELLOW}No se pudo obtener la URL de la API${NC}"
 fi
+
+echo -e "${GREEN}=== El sistema AppGestion está listo para usar ===${NC}"

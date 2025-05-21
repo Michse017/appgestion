@@ -16,9 +16,9 @@ PROJECT_ROOT=$(pwd)
 
 echo -e "${GREEN}=== Preparando imágenes Docker para AppGestion desde ${PROJECT_ROOT} ===${NC}"
 
-# Verificar estructura del proyecto
+# Verificar estructura del proyecto (corregida)
 echo -e "${YELLOW}Verificando estructura del proyecto...${NC}"
-for dir in "frontend" "backend/user-service" "backend/product-service"; do
+for dir in "frontend" "user-service" "product-service"; do
   if [ ! -d "$dir" ]; then
     echo -e "${RED}Error: El directorio '$dir' no existe${NC}"
     exit 1
@@ -48,10 +48,21 @@ fi
 echo -e "${YELLOW}Iniciando sesión en DockerHub...${NC}"
 echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
 
-# Construir imágenes
-echo -e "${YELLOW}Construyendo imágenes Docker...${NC}"
-docker build -t "$DOCKERHUB_USER/appgestion-user-service:latest" ./backend/user-service/
-docker build -t "$DOCKERHUB_USER/appgestion-product-service:latest" ./backend/product-service/
+# Preparar frontend para producción
+echo -e "${YELLOW}Construyendo frontend para producción...${NC}"
+cd frontend
+echo "REACT_APP_API_URL=" > .env.production  # URL vacía para usar rutas relativas con API Gateway
+npm install
+npm run build
+cd ..
+
+# Construir imágenes (rutas corregidas)
+echo -e "${YELLOW}Construyendo imágenes Docker para servicios backend...${NC}"
+docker build -t "$DOCKERHUB_USER/appgestion-user-service:latest" ./user-service/
+docker build -t "$DOCKERHUB_USER/appgestion-product-service:latest" ./product-service/
+
+# No necesitamos la imagen del frontend para producción, ya que se desplegará en S3
+# pero aún así la construimos por si se necesita para desarrollo/pruebas
 docker build -t "$DOCKERHUB_USER/appgestion-frontend:latest" ./frontend/
 
 # Publicar imágenes
@@ -61,4 +72,5 @@ docker push "$DOCKERHUB_USER/appgestion-product-service:latest"
 docker push "$DOCKERHUB_USER/appgestion-frontend:latest"
 
 echo -e "${GREEN}=== Imágenes Docker construidas y publicadas con éxito ===${NC}"
-echo -e "${YELLOW}Puedes verificarlas en: https://hub.docker.com/u/${DOCKERHUB_USER}${NC}"
+echo -e "${YELLOW}Frontend construido y listo para despliegue en S3${NC}"
+echo -e "${YELLOW}Puedes verificar las imágenes en: https://hub.docker.com/u/${DOCKERHUB_USER}${NC}"
