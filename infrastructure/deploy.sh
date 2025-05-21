@@ -1,5 +1,5 @@
 #!/bin/bash
-# deploy.sh - Script para despliegue completo de AppGestion
+# deploy.sh - Script para desplegar la infraestructura en AWS
 
 set -e  # Detener en caso de error
 
@@ -14,11 +14,11 @@ SCRIPT_DIR=$(dirname "$0")
 cd "$SCRIPT_DIR/.." || exit 1
 PROJECT_ROOT=$(pwd)
 
-echo -e "${GREEN}=== Iniciando despliegue de AppGestion desde ${PROJECT_ROOT} ===${NC}"
+echo -e "${GREEN}=== Desplegando infraestructura AppGestion en AWS desde ${PROJECT_ROOT} ===${NC}"
 
 # Verificar estructura del proyecto
 echo -e "${YELLOW}Verificando estructura del proyecto...${NC}"
-for dir in "infrastructure/terraform" "infrastructure/ansible" "frontend" "backend/user-service" "backend/product-service"; do
+for dir in "infrastructure/terraform" "infrastructure/ansible"; do
   if [ ! -d "$dir" ]; then
     echo -e "${RED}Error: El directorio '$dir' no existe${NC}"
     exit 1
@@ -32,41 +32,23 @@ if [ ! -f "infrastructure/terraform/terraform.tfvars" ]; then
   exit 1
 fi
 
-# 1. Construir y publicar imágenes Docker
-echo -e "${GREEN}=== Construyendo y publicando imágenes Docker ===${NC}"
-
-# Obtener credenciales desde archivo de variables
+# Verificar que existen las imágenes Docker
+echo -e "${YELLOW}Verificando imágenes Docker...${NC}"
 DOCKERHUB_USER=$(grep dockerhub_username infrastructure/terraform/terraform.tfvars | cut -d '"' -f2)
-DOCKERHUB_PASS=$(grep dockerhub_password infrastructure/terraform/terraform.tfvars | cut -d '"' -f2)
 
-if [ -z "$DOCKERHUB_USER" ] || [ -z "$DOCKERHUB_PASS" ]; then
-  echo -e "${RED}Error: No se pudieron obtener las credenciales de DockerHub${NC}"
+if [ -z "$DOCKERHUB_USER" ]; then
+  echo -e "${RED}Error: No se pudo obtener el usuario de DockerHub${NC}"
   exit 1
 fi
 
-# Login en DockerHub
-echo -e "${YELLOW}Iniciando sesión en DockerHub...${NC}"
-echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
-
-# Construir y publicar imágenes (ajustado según la estructura real del proyecto)
-echo -e "${YELLOW}Construyendo imágenes Docker...${NC}"
-docker build -t "$DOCKERHUB_USER/appgestion-user-service:latest" ./backend/user-service/
-docker build -t "$DOCKERHUB_USER/appgestion-product-service:latest" ./backend/product-service/
-docker build -t "$DOCKERHUB_USER/appgestion-frontend:latest" ./frontend/
-
-echo -e "${YELLOW}Publicando imágenes en DockerHub...${NC}"
-docker push "$DOCKERHUB_USER/appgestion-user-service:latest"
-docker push "$DOCKERHUB_USER/appgestion-product-service:latest"
-docker push "$DOCKERHUB_USER/appgestion-frontend:latest"
-
-# 2. Crear los directorios de Ansible si no existen
+# 1. Crear los directorios de Ansible si no existen
 echo -e "${YELLOW}Preparando directorios de Ansible...${NC}"
 mkdir -p infrastructure/ansible/inventory
 mkdir -p infrastructure/ansible/group_vars
 mkdir -p infrastructure/ansible/roles/appgestion/tasks
 mkdir -p infrastructure/ansible/roles/appgestion/templates
 
-# 3. Crear las plantillas de Terraform si no existen
+# 2. Crear las plantillas de Terraform si no existen
 echo -e "${YELLOW}Verificando plantillas de Terraform...${NC}"
 mkdir -p infrastructure/terraform/templates
 
@@ -93,7 +75,7 @@ api_endpoint: "${api_endpoint}"
 EOF
 fi
 
-# 4. Desplegar infraestructura con Terraform
+# 3. Desplegar infraestructura con Terraform
 echo -e "${GREEN}=== Desplegando infraestructura con Terraform ===${NC}"
 cd infrastructure/terraform
 terraform init
@@ -105,11 +87,11 @@ fi
 
 terraform apply -auto-approve
 
-# 5. Permitir que las instancias EC2 se inicien completamente
+# 4. Permitir que las instancias EC2 se inicien completamente
 echo -e "${YELLOW}Esperando 60 segundos para permitir que las instancias EC2 se inicialicen...${NC}"
 sleep 60
 
-# 6. Ejecutar Ansible para configurar las instancias
+# 5. Ejecutar Ansible para configurar las instancias
 echo -e "${GREEN}=== Configurando instancias con Ansible ===${NC}"
 cd ../ansible
 
