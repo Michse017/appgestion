@@ -592,7 +592,7 @@ resource "aws_api_gateway_method" "users_proxy" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.users.id
   http_method   = "ANY"
-  authorization_type = "NONE"
+  authorization = "NONE"
 }
 
 resource "aws_api_gateway_integration" "users_proxy" {
@@ -621,7 +621,7 @@ resource "aws_api_gateway_method" "products_proxy" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.products.id
   http_method   = "ANY"
-  authorization_type = "NONE"
+  authorization = "NONE"
 }
 
 resource "aws_api_gateway_integration" "products_proxy" {
@@ -656,7 +656,8 @@ resource "aws_api_gateway_deployment" "main" {
 # Archivo local para inventario Ansible
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/templates/inventory.tmpl", {
-    backend_ip = aws_instance.backend.public_ip
+    backend_ip = aws_instance.backend.public_ip,
+    ssh_key_path = var.ssh_key_path  // Añadir la variable necesaria
   })
   filename = "${path.module}/../ansible/inventory/hosts.ini"
 }

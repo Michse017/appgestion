@@ -1,7 +1,7 @@
 ---
 # Playbook principal para AppGestion
 - name: Configurar servidores para AppGestion
-  hosts: tag_name_appgestion-backend
+  hosts: backend
   become: yes
   vars:
     app_dir: /opt/appgestion

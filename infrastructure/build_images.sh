@@ -16,6 +16,11 @@ PROJECT_ROOT=$(pwd)
 
 echo -e "${GREEN}=== Preparando imágenes Docker para AppGestion desde ${PROJECT_ROOT} ===${NC}"
 
+if ! command -v npm &> /dev/null; then
+  echo -e "${RED}Error: npm no está instalado${NC}"
+  exit 1
+fi
+
 # Verificar estructura del proyecto (corregida)
 echo -e "${YELLOW}Verificando estructura del proyecto...${NC}"
 for dir in "frontend" "user-service" "product-service"; do

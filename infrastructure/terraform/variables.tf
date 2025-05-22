@@ -42,6 +42,11 @@ variable "private_subnet_cidrs" {
   default     = ["10.0.3.0/24", "10.0.4.0/24"]
 }
 
+variable "ssh_key_path" {
+  description = "Ruta al archivo de clave privada SSH (.pem) para Ansible"
+  type        = string
+}
+
 variable "availability_zones" {
   description = "Lista de zonas de disponibilidad"
   type        = list(string)

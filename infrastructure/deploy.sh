@@ -1,4 +1,5 @@
 #!/bin/bash
+# filepath: e:\BRNDLD\appgestion\infrastructure\deploy.sh
 # deploy.sh - Script para desplegar la infraestructura en AWS
 
 set -e  # Detener en caso de error
@@ -80,11 +81,12 @@ mkdir -p infrastructure/ansible/roles/appgestion/templates
 echo -e "${YELLOW}Verificando plantillas de Terraform...${NC}"
 mkdir -p infrastructure/terraform/templates
 
+# CORREGIDO: Usar correctamente ssh_key_path en lugar de ssh_key_name.pem
 if [ ! -f "infrastructure/terraform/templates/inventory.tmpl" ]; then
   echo -e "${YELLOW}Creando plantilla inventory.tmpl...${NC}"
   cat > infrastructure/terraform/templates/inventory.tmpl << 'EOF'
 [backend]
-backend ansible_host=${backend_ip} ansible_user=ubuntu ansible_ssh_private_key_file=~/.ssh/${ssh_key_name}.pem
+${backend_ip} ansible_user=ubuntu ansible_ssh_private_key_file=${ssh_key_path}
 EOF
 fi
 
@@ -107,17 +109,24 @@ fi
 echo -e "${GREEN}=== Desplegando infraestructura con Terraform ===${NC}"
 cd infrastructure/terraform
 terraform init
+
+# CORREGIDO: Validar y aplicar con mensaje de error más detallado
+echo -e "${YELLOW}Validando configuración Terraform...${NC}"
 terraform validate
 if [ $? -ne 0 ]; then
-  echo -e "${RED}Error: La validación de Terraform falló${NC}"
+  echo -e "${RED}Error: La validación de Terraform falló. Por favor, verifica la configuración.${NC}"
   exit 1
 fi
 
+echo -e "${YELLOW}Aplicando configuración Terraform...${NC}"
 terraform apply -auto-approve
 
 # 4. Obtener nombre del bucket S3 y subir frontend
 echo -e "${YELLOW}Obteniendo información del bucket S3...${NC}"
-S3_BUCKET=$(terraform output -raw s3_bucket_name 2>/dev/null || echo "")
+# CORREGIDO: Utilizar nombre más genérico para intentar varios outputs posibles
+S3_BUCKET=$(terraform output -raw frontend_bucket_name 2>/dev/null || 
+           terraform output -raw s3_bucket_name 2>/dev/null ||
+           terraform output -raw s3_bucket 2>/dev/null || echo "")
 
 if [ -n "$S3_BUCKET" ]; then
   echo -e "${YELLOW}Subiendo frontend al bucket S3: ${S3_BUCKET}${NC}"
@@ -139,6 +148,9 @@ cd "$PROJECT_ROOT/infrastructure/ansible"
 # Verificar qué tipo de inventario está disponible
 if [ -f "inventory/hosts.ini" ]; then
   echo -e "${YELLOW}Usando inventario estático hosts.ini...${NC}"
+  # AÑADIDO: Mostrar el contenido para verificar
+  echo -e "${YELLOW}Contenido del inventario:${NC}"
+  cat inventory/hosts.ini
   ansible-playbook -i inventory/hosts.ini playbook.yml
 elif [ -f "inventory/aws_ec2.yml" ]; then
   echo -e "${YELLOW}Usando inventario dinámico aws_ec2.yml...${NC}"
@@ -151,7 +163,9 @@ fi
 # 7. Invalidar caché de CloudFront para refrescar el frontend
 echo -e "${YELLOW}Invalidando caché de CloudFront...${NC}"
 cd "$PROJECT_ROOT/infrastructure/terraform"
-CF_DIST_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || echo "")
+# CORREGIDO: Probar varios nombres de output posibles
+CF_DIST_ID=$(terraform output -raw cloudfront_distribution_id 2>/dev/null || 
+            terraform output -raw cloudfront_id 2>/dev/null || echo "")
 
 if [ -n "$CF_DIST_ID" ]; then
   aws cloudfront create-invalidation --distribution-id ${CF_DIST_ID} --paths "/*"
@@ -165,34 +179,54 @@ echo -e "${GREEN}=== Despliegue completado con éxito ===${NC}"
 # 8. Verificar servicios desplegados
 echo -e "${YELLOW}Verificando servicios desplegados...${NC}"
 
-# Mostrar información de acceso usando los nombres correctos de outputs
-if terraform output -raw frontend_cloudfront_domain &>/dev/null; then
-  echo -e "Frontend: https://$(terraform output -raw frontend_cloudfront_domain)"
-elif terraform output -raw frontend_url &>/dev/null; then
-  echo -e "Frontend: $(terraform output -raw frontend_url)"
+# CORREGIDO: Probar múltiples nombres de outputs para mayor compatibilidad
+FRONTEND_URL=""
+for output in frontend_cloudfront_domain cloudfront_domain_name frontend_url; do
+  if terraform output -raw $output &>/dev/null; then
+    FRONTEND_URL=$(terraform output -raw $output)
+    break
+  fi
+done
+
+if [ -n "$FRONTEND_URL" ]; then
+  echo -e "Frontend: https://${FRONTEND_URL}"
 else
   echo -e "${YELLOW}No se pudo obtener la URL del frontend${NC}"
 fi
 
-if terraform output -raw api_gateway_invoke_url &>/dev/null; then
-  API_URL=$(terraform output -raw api_gateway_invoke_url)
+# CORREGIDO: Probar múltiples nombres de outputs para API Gateway
+API_URL=""
+for output in api_gateway_invoke_url api_url invoke_url; do
+  if terraform output -raw $output &>/dev/null; then
+    API_URL=$(terraform output -raw $output)
+    break
+  fi
+done
+
+if [ -n "$API_URL" ]; then
   echo -e "API: ${API_URL}"
   
-  # Verificar servicios backend
+  # MEJORADO: Verificar endpoints con información más detallada
   echo -e "${YELLOW}Verificando disponibilidad de endpoints...${NC}"
   
-  curl -s "${API_URL}/users" > /dev/null
-  if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✅ Servicio de usuarios funcionando correctamente${NC}"
+  # Verificar servicio de usuarios
+  echo -e "Comprobando servicio de usuarios..."
+  USERS_RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/users" 2>/dev/null)
+  HTTP_CODE=$(echo "$USERS_RESPONSE" | tail -n1)
+  if [ "$HTTP_CODE" -eq 200 ]; then
+    echo -e "${GREEN}✅ Servicio de usuarios funcionando correctamente (HTTP 200)${NC}"
   else
-    echo -e "${YELLOW}⚠️ Servicio de usuarios no responde${NC}"
+    echo -e "${YELLOW}⚠️ Servicio de usuarios responde con código HTTP ${HTTP_CODE}${NC}"
   fi
   
-  curl -s "${API_URL}/products" > /dev/null
-  if [ $? -eq 0 ]; then
-    echo -e "${GREEN}✅ Servicio de productos funcionando correctamente${NC}"
+  # Verificar servicio de productos
+  echo -e "Comprobando servicio de productos..."
+  PRODUCTS_RESPONSE=$(curl -s -w "\n%{http_code}" "${API_URL}/products" 2>/dev/null)
+  HTTP_CODE=$(echo "$PRODUCTS_RESPONSE" | tail -n1)
+  if [ "$HTTP_CODE" -eq 200 ]; then
+    echo -e "${GREEN}✅ Servicio de productos funcionando correctamente (HTTP 200)${NC}"
   else
-    echo -e "${YELLOW}⚠️ Servicio de productos no responde${NC}"
+    echo -e "${YELLOW}⚠️ Servicio de productos responde con código HTTP ${HTTP_CODE}${NC}"
   fi
 else
   echo -e "${YELLOW}No se pudo obtener la URL de la API${NC}"
