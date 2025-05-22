@@ -13,8 +13,14 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 app = Flask(__name__)
-# Permitir CORS para todas las rutas y orígenes
-CORS(app, supports_credentials=True, origins="*")
+
+# Configuración CORS mejorada
+cors_origins = os.environ.get("CORS_ALLOWED_ORIGINS", "*").split(",")
+CORS(app, 
+     resources={r"/*": {"origins": cors_origins}}, 
+     supports_credentials=True,
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+     allow_headers=["Content-Type", "X-Amz-Date", "Authorization", "X-Api-Key", "X-Requested-With"])
 
 # Configuración PostgreSQL - Adaptado para AWS RDS y Docker
 db_user = os.environ.get("POSTGRES_USER", os.environ.get("DB_USER", "product"))

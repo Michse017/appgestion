@@ -112,3 +112,17 @@
   with_items:
     - { name: "user-service", port: "3001" }
     - { name: "product-service", port: "3002" }
+
+- name: Crear configuración de nginx
+  template:
+    src: nginx.conf.j2
+    dest: "{{ app_dir }}/nginx.conf"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Crear directorio SSL
+  file:
+    path: "{{ app_dir }}/ssl"
+    state: directory
+    mode: '0755'

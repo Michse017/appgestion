@@ -21,7 +21,7 @@ if ! command -v npm &> /dev/null; then
   exit 1
 fi
 
-# Verificar estructura del proyecto (corregida)
+# Verificar estructura del proyecto
 echo -e "${YELLOW}Verificando estructura del proyecto...${NC}"
 for dir in "frontend" "user-service" "product-service"; do
   if [ ! -d "$dir" ]; then
@@ -56,12 +56,32 @@ echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
 # Preparar frontend para producción
 echo -e "${YELLOW}Construyendo frontend para producción...${NC}"
 cd frontend
-echo "REACT_APP_API_URL=" > .env.production  # URL vacía para usar rutas relativas con API Gateway
+
+# Obtener URL API Gateway de Terraform output si está disponible
+if [ -f "$PROJECT_ROOT/infrastructure/terraform/terraform.tfstate" ]; then
+  API_URL=$(cd "$PROJECT_ROOT/infrastructure/terraform" && terraform output -raw api_gateway_invoke_url 2>/dev/null || echo "")
+  
+  if [ -n "$API_URL" ]; then
+    # Eliminar barra diagonal final si existe
+    API_URL="${API_URL%/}"
+    echo "REACT_APP_API_URL=${API_URL}" > .env.production
+    echo -e "${YELLOW}Configurando frontend para usar API: ${API_URL}${NC}"
+  else
+    # En lugar de dejar vacío, usar un placeholder que se pueda detectar
+    echo "REACT_APP_API_URL=https://api-gateway-placeholder" > .env.production
+    echo -e "${YELLOW}No se encontró URL de API Gateway, usando placeholder temporal${NC}"
+  fi
+else
+  # En lugar de dejar vacío, usar un placeholder que se pueda detectar
+  echo "REACT_APP_API_URL=https://api-gateway-placeholder" > .env.production
+  echo -e "${YELLOW}No se encontró terraform.tfstate, usando placeholder temporal${NC}"
+fi
+
 npm install
 npm run build
 cd ..
 
-# Construir imágenes (rutas corregidas)
+# Construir imágenes
 echo -e "${YELLOW}Construyendo imágenes Docker para servicios backend...${NC}"
 docker build -t "$DOCKERHUB_USER/appgestion-user-service:latest" ./user-service/
 docker build -t "$DOCKERHUB_USER/appgestion-product-service:latest" ./product-service/

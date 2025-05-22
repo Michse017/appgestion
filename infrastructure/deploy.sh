@@ -1,5 +1,4 @@
 #!/bin/bash
-# filepath: e:\BRNDLD\appgestion\infrastructure\deploy.sh
 # deploy.sh - Script para desplegar la infraestructura en AWS
 
 set -e  # Detener en caso de error

@@ -11,6 +11,9 @@ function App() {
 
   // URL base para las APIs - usa variables de entorno si están disponibles
   const API_URL = process.env.REACT_APP_API_URL || '';
+  const apiUrl = API_URL === 'https://api-gateway-placeholder' 
+  ? `${window.location.origin}` // Usar origen actual
+  : API_URL;
 
   // Cargar datos al iniciar
   useEffect(() => {
@@ -23,7 +26,7 @@ function App() {
     setError(prev => ({ ...prev, users: null }));
     
     try {
-      const response = await fetch(`${API_URL}/users`);
+      const response = await fetch(`${apiUrl}/users`);
       if (!response.ok) throw new Error(`Error: ${response.statusText}`);
       const data = await response.json();
       setUsers(data);
@@ -40,7 +43,7 @@ function App() {
     setError(prev => ({ ...prev, products: null }));
     
     try {
-      const response = await fetch(`${API_URL}/products`);
+      const response = await fetch(`${apiUrl}/products`);
       if (!response.ok) throw new Error(`Error: ${response.statusText}`);
       const data = await response.json();
       setProducts(data);
@@ -57,7 +60,7 @@ function App() {
     setLoading(prev => ({ ...prev, users: true }));
     
     try {
-      const response = await fetch(`${API_URL}/users`, {
+      const response = await fetch(`${apiUrl}/users`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newUser),
@@ -80,7 +83,7 @@ function App() {
     setLoading(prev => ({ ...prev, products: true }));
     
     try {
-      const response = await fetch(`${API_URL}/products`, {
+      const response = await fetch(`${apiUrl}/products`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

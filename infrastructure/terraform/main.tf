@@ -580,6 +580,10 @@ resource "aws_api_gateway_rest_api" "main" {
   }
 }
 
+# ======================================================
+# API GATEWAY - SERVICIO DE USUARIOS
+# ======================================================
+
 # Recurso para servicio de usuarios
 resource "aws_api_gateway_resource" "users" {
   rest_api_id = aws_api_gateway_rest_api.main.id
@@ -587,7 +591,7 @@ resource "aws_api_gateway_resource" "users" {
   path_part   = "users"
 }
 
-# Método proxy para servicio de usuarios
+# Método ANY para permitir todas las operaciones HTTP
 resource "aws_api_gateway_method" "users_proxy" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.users.id
@@ -601,13 +605,99 @@ resource "aws_api_gateway_integration" "users_proxy" {
   http_method = aws_api_gateway_method.users_proxy.http_method
   
   type                    = "HTTP_PROXY"
-  uri                     = "http://${aws_instance.backend.public_ip}:3001/{proxy}"
+  # Corregido: eliminación de {proxy}
+  uri                     = "http://${aws_instance.backend.public_ip}:3001/users"
   integration_http_method = "ANY"
+}
+
+# Respuesta del método para incluir encabezados CORS
+resource "aws_api_gateway_method_response" "users_proxy_response" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.users.id
+  http_method = aws_api_gateway_method.users_proxy.http_method
+  status_code = "200"
   
-  request_parameters = {
-    "integration.request.path.proxy" = "method.request.path.proxy"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin"      = true,
+    "method.response.header.Access-Control-Allow-Methods"     = true,
+    "method.response.header.Access-Control-Allow-Headers"     = true,
+    "method.response.header.Access-Control-Allow-Credentials" = true
   }
 }
+
+# Respuesta de integración para configurar valores de encabezados CORS
+resource "aws_api_gateway_integration_response" "users_proxy_integration_response" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.users.id
+  http_method = aws_api_gateway_method.users_proxy.http_method
+  status_code = aws_api_gateway_method_response.users_proxy_response.status_code
+  
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin"      = "'*'",
+    "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
+    "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
+    "method.response.header.Access-Control-Allow-Credentials" = "'true'"
+  }
+  
+  depends_on = [
+    aws_api_gateway_integration.users_proxy
+  ]
+}
+
+# Método OPTIONS para CORS preflight
+resource "aws_api_gateway_method" "users_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.users.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "users_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.users.id
+  http_method = aws_api_gateway_method.users_options.http_method
+  type        = "MOCK"
+  
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "users_options_200" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.users.id
+  http_method = aws_api_gateway_method.users_options.http_method
+  status_code = "200"
+  
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers"     = true,
+    "method.response.header.Access-Control-Allow-Methods"     = true,
+    "method.response.header.Access-Control-Allow-Origin"      = true,
+    "method.response.header.Access-Control-Allow-Credentials" = true
+  }
+  
+  response_models = {
+    "application/json" = "Empty"
+  }
+}
+
+resource "aws_api_gateway_integration_response" "users_options_integration_response" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.users.id
+  http_method = aws_api_gateway_method.users_options.http_method
+  status_code = aws_api_gateway_method_response.users_options_200.status_code
+  
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
+    "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
+    "method.response.header.Access-Control-Allow-Origin"      = "'*'",
+    "method.response.header.Access-Control-Allow-Credentials" = "'true'"
+  }
+}
+
+# ======================================================
+# API GATEWAY - SERVICIO DE PRODUCTOS
+# ======================================================
 
 # Recurso para servicio de productos
 resource "aws_api_gateway_resource" "products" {
@@ -616,7 +706,7 @@ resource "aws_api_gateway_resource" "products" {
   path_part   = "products"
 }
 
-# Método proxy para servicio de productos
+# Método ANY para permitir todas las operaciones HTTP
 resource "aws_api_gateway_method" "products_proxy" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.products.id
@@ -630,11 +720,93 @@ resource "aws_api_gateway_integration" "products_proxy" {
   http_method = aws_api_gateway_method.products_proxy.http_method
   
   type                    = "HTTP_PROXY"
-  uri                     = "http://${aws_instance.backend.public_ip}:3002/{proxy}"
+  # Corregido: eliminación de {proxy}
+  uri                     = "http://${aws_instance.backend.public_ip}:3002/products"
   integration_http_method = "ANY"
+}
+
+# Respuesta del método para incluir encabezados CORS
+resource "aws_api_gateway_method_response" "products_proxy_response" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.products.id
+  http_method = aws_api_gateway_method.products_proxy.http_method
+  status_code = "200"
   
-  request_parameters = {
-    "integration.request.path.proxy" = "method.request.path.proxy"
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin"      = true,
+    "method.response.header.Access-Control-Allow-Methods"     = true,
+    "method.response.header.Access-Control-Allow-Headers"     = true,
+    "method.response.header.Access-Control-Allow-Credentials" = true
+  }
+}
+
+# Respuesta de integración para configurar valores de encabezados CORS
+resource "aws_api_gateway_integration_response" "products_proxy_integration_response" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.products.id
+  http_method = aws_api_gateway_method.products_proxy.http_method
+  status_code = aws_api_gateway_method_response.products_proxy_response.status_code
+  
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Origin"      = "'*'",
+    "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
+    "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
+    "method.response.header.Access-Control-Allow-Credentials" = "'true'"
+  }
+  
+  depends_on = [
+    aws_api_gateway_integration.products_proxy
+  ]
+}
+
+# Método OPTIONS para CORS preflight
+resource "aws_api_gateway_method" "products_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.products.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "products_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.products.id
+  http_method = aws_api_gateway_method.products_options.http_method
+  type        = "MOCK"
+  
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_method_response" "products_options_200" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.products.id
+  http_method = aws_api_gateway_method.products_options.http_method
+  status_code = "200"
+  
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers"     = true,
+    "method.response.header.Access-Control-Allow-Methods"     = true,
+    "method.response.header.Access-Control-Allow-Origin"      = true,
+    "method.response.header.Access-Control-Allow-Credentials" = true
+  }
+  
+  response_models = {
+    "application/json" = "Empty"
+  }
+}
+
+resource "aws_api_gateway_integration_response" "products_options_integration_response" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.products.id
+  http_method = aws_api_gateway_method.products_options.http_method
+  status_code = aws_api_gateway_method_response.products_options_200.status_code
+  
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
+    "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
+    "method.response.header.Access-Control-Allow-Origin"      = "'*'",
+    "method.response.header.Access-Control-Allow-Credentials" = "'true'"
   }
 }
 
@@ -642,11 +814,27 @@ resource "aws_api_gateway_integration" "products_proxy" {
 resource "aws_api_gateway_deployment" "main" {
   depends_on = [
     aws_api_gateway_integration.users_proxy,
-    aws_api_gateway_integration.products_proxy
+    aws_api_gateway_integration.products_proxy,
+    aws_api_gateway_integration.users_options,
+    aws_api_gateway_integration.products_options,
+    aws_api_gateway_integration_response.users_options_integration_response,
+    aws_api_gateway_integration_response.products_options_integration_response
   ]
   
   rest_api_id = aws_api_gateway_rest_api.main.id
   stage_name  = var.environment
+}
+
+# Habilitar CORS para el stage completo
+resource "aws_api_gateway_method_settings" "all" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  stage_name  = aws_api_gateway_deployment.main.stage_name
+  method_path = "*/*"
+
+  settings {
+    metrics_enabled = true
+    logging_level   = "INFO"
+  }
 }
 
 # ======================================================
@@ -657,7 +845,7 @@ resource "aws_api_gateway_deployment" "main" {
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/templates/inventory.tmpl", {
     backend_ip = aws_instance.backend.public_ip,
-    ssh_key_path = var.ssh_key_path  // Añadir la variable necesaria
+    ssh_key_path = var.ssh_key_path  // Usar la ruta completa del SSH como se solicitó
   })
   filename = "${path.module}/../ansible/inventory/hosts.ini"
 }
