@@ -76,7 +76,37 @@
     group: root
     mode: '0600'
 
-- name: Crear docker-compose.yml
+# CORRECCIÓN: Crear estructura de directorios para Nginx
+- name: Crear directorio para configuración de Nginx
+  file:
+    path: "{{ app_dir }}/nginx-config"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# CORRECCIÓN: Crear configuración de nginx en ubicación específica
+- name: Crear configuración de nginx
+  template:
+    src: nginx.conf
+    dest: "{{ app_dir }}/nginx-config/nginx.conf"
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Verificar el contenido del archivo nginx.conf
+  command: cat {{ app_dir }}/nginx-config/nginx.conf
+  register: nginx_conf_content
+  changed_when: false
+  check_mode: no
+
+- name: Crear directorio SSL
+  file:
+    path: "{{ app_dir }}/nginx-config/ssl"
+    state: directory
+    mode: '0755'
+
+- name: Crear docker-compose.yml (con nueva configuración de nginx)
   template:
     src: docker-compose.yml.j2
     dest: "{{ app_dir }}/docker-compose.yml"
@@ -88,6 +118,20 @@
   shell: "cd {{ app_dir }} && docker-compose down"
   ignore_errors: yes
   changed_when: false
+
+# CORRECCIÓN: Agregar verificación adicional antes de iniciar contenedores
+- name: Verificar la existencia de archivos críticos
+  stat:
+    path: "{{ item }}"
+  register: critical_files
+  with_items:
+    - "{{ app_dir }}/nginx-config/nginx.conf"
+    - "{{ app_dir }}/docker-compose.yml"
+
+- name: Mostrar estado de archivos críticos
+  debug:
+    msg: "Archivo {{ item.item }} existe: {{ item.stat.exists }}, tamaño: {{ item.stat.size|default(0) }} bytes"
+  with_items: "{{ critical_files.results }}"
 
 - name: Iniciar contenedores con docker-compose
   shell: "cd {{ app_dir }} && docker-compose up -d"
@@ -112,34 +156,3 @@
   with_items:
     - { name: "user-service", port: "3001" }
     - { name: "product-service", port: "3002" }
-
-- name: Verificar si nginx.conf existe y es un directorio
-  stat:
-    path: "{{ app_dir }}/nginx.conf"
-  register: nginx_conf_stat
-
-- name: Eliminar nginx.conf si es un directorio
-  file:
-    path: "{{ app_dir }}/nginx.conf"
-    state: absent
-  when: nginx_conf_stat.stat.exists and nginx_conf_stat.stat.isdir
-
-- name: Crear configuración de nginx
-  template:
-    src: nginx.conf
-    dest: "{{ app_dir }}/nginx.conf"
-    owner: root
-    group: root
-    mode: '0644'
-
-- name: Verificar el contenido del archivo nginx.conf
-  command: cat {{ app_dir }}/nginx.conf
-  register: nginx_conf_content
-  changed_when: false
-  check_mode: no
-
-- name: Crear directorio SSL
-  file:
-    path: "{{ app_dir }}/ssl"
-    state: directory
-    mode: '0755'
