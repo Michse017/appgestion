@@ -147,10 +147,9 @@ cd "$PROJECT_ROOT/infrastructure/ansible"
 # Verificar qué tipo de inventario está disponible
 if [ -f "inventory/hosts.ini" ]; then
   echo -e "${YELLOW}Usando inventario estático hosts.ini...${NC}"
-  # AÑADIDO: Mostrar el contenido para verificar
   echo -e "${YELLOW}Contenido del inventario:${NC}"
   cat inventory/hosts.ini
-  ansible-playbook -i inventory/hosts.ini playbook.yml
+  ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i inventory/hosts.ini playbook.yml
 elif [ -f "inventory/aws_ec2.yml" ]; then
   echo -e "${YELLOW}Usando inventario dinámico aws_ec2.yml...${NC}"
   ansible-playbook -i inventory/aws_ec2.yml playbook.yml

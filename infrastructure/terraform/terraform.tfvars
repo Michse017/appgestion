@@ -14,6 +14,7 @@ domain_name    = "tudominio.com"
 
 # SSH Key para acceso a EC2
 ssh_key_path = "/ruta/a/tu-clave.pem"
+ssh_key_name = "nombre-de-tu-clave-en-aws"
 
 # Credenciales DockerHub (para imágenes)
 dockerhub_username = "tu_nombre_usuario_dockerhub"

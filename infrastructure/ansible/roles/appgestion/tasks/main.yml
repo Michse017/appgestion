@@ -113,13 +113,30 @@
     - { name: "user-service", port: "3001" }
     - { name: "product-service", port: "3002" }
 
+- name: Verificar si nginx.conf existe y es un directorio
+  stat:
+    path: "{{ app_dir }}/nginx.conf"
+  register: nginx_conf_stat
+
+- name: Eliminar nginx.conf si es un directorio
+  file:
+    path: "{{ app_dir }}/nginx.conf"
+    state: absent
+  when: nginx_conf_stat.stat.exists and nginx_conf_stat.stat.isdir
+
 - name: Crear configuración de nginx
   template:
-    src: nginx.conf.j2
+    src: nginx.conf
     dest: "{{ app_dir }}/nginx.conf"
     owner: root
     group: root
     mode: '0644'
+
+- name: Verificar el contenido del archivo nginx.conf
+  command: cat {{ app_dir }}/nginx.conf
+  register: nginx_conf_content
+  changed_when: false
+  check_mode: no
 
 - name: Crear directorio SSL
   file:

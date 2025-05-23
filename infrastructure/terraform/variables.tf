@@ -71,7 +71,7 @@ variable "instance_type" {
 variable "ec2_ami" {
   description = "AMI ID para instancias EC2"
   type        = string
-  default     = "ami-0c55b159cbfafe1f0" # Ubuntu 20.04 LTS
+  default     = "ami-0c7217cdde317cfec" # Ubuntu 22.04 LTS actual
 }
 
 # ======================================================

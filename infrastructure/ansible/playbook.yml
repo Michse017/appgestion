@@ -7,7 +7,7 @@
     app_dir: /opt/appgestion
     aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
     project_name: "{{ lookup('env', 'PROJECT_NAME') | default('appgestion', true) }}"
-    environment: "{{ lookup('env', 'ENVIRONMENT') | default('prod', true) }}"
+    app_environment: "{{ lookup('env', 'ENVIRONMENT') | default('prod', true) }}"
 
   pre_tasks:
     - name: Actualizar caché de apt

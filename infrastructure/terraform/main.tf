@@ -149,7 +149,7 @@ resource "aws_route_table_association" "private" {
 # Grupo de seguridad para instancias EC2 públicas
 resource "aws_security_group" "ec2" {
   name        = "${var.project_name}-ec2-sg"
-  description = "Permite tráfico necesario para EC2"
+  description = "Permite trafico necesario para EC2"
   vpc_id      = aws_vpc.main.id
   
   # SSH desde cualquier lugar (puede restringirse a IPs específicas)
@@ -462,26 +462,22 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
   }
 }
 
+# Primero, actualiza la configuración de acceso público
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
   block_public_acls       = false
-  block_public_policy     = false
+  block_public_policy     = false  # Esto permite políticas públicas
   ignore_public_acls      = false
   restrict_public_buckets = false
 }
 
-resource "aws_s3_bucket_acl" "frontend" {
+# La política del bucket debe depender explícitamente de esta configuración
+resource "aws_s3_bucket_policy" "frontend" {
   depends_on = [
     aws_s3_bucket_ownership_controls.frontend,
-    aws_s3_bucket_public_access_block.frontend,
+    aws_s3_bucket_public_access_block.frontend,  # Agregar esta dependencia
   ]
 
-  bucket = aws_s3_bucket.frontend.id
-  acl    = "public-read"
-}
-
-# Política para permitir acceso público
-resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   
   policy = jsonencode({
@@ -832,8 +828,8 @@ resource "aws_api_gateway_method_settings" "all" {
   method_path = "*/*"
 
   settings {
-    metrics_enabled = true
-    logging_level   = "INFO"
+    metrics_enabled = false  # Cambiado a false
+    logging_level   = "OFF"  # Cambiado a OFF
   }
 }
 
