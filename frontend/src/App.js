@@ -1,196 +1,186 @@
 import React, { useState, useEffect } from 'react';
-import './app.css';
+import './App.css';
+import { USER_SERVICE_URL, PRODUCT_SERVICE_URL } from './config';
 
 function App() {
   const [users, setUsers] = useState([]);
   const [products, setProducts] = useState([]);
-  const [newUser, setNewUser] = useState({ name: '', email: '' });
-  const [newProduct, setNewProduct] = useState({ name: '', price: '' });
-  const [loading, setLoading] = useState({ users: false, products: false });
-  const [error, setError] = useState({ users: null, products: null });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
-  // URL base para las APIs - usa variables de entorno si están disponibles
-  const API_URL = process.env.REACT_APP_API_URL || '';
-  const apiUrl = API_URL === 'https://api-gateway-placeholder' 
-  ? `${window.location.origin}` // Usar origen actual
-  : API_URL;
+  // Estados para formularios
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '' });
+  const [newProduct, setNewProduct] = useState({ name: '', description: '', price: '' });
 
-  // Cargar datos al iniciar
   useEffect(() => {
-    fetchUsers();
-    fetchProducts();
+    fetchData();
   }, []);
 
-  const fetchUsers = async () => {
-    setLoading(prev => ({ ...prev, users: true }));
-    setError(prev => ({ ...prev, users: null }));
-    
+  const fetchData = async () => {
     try {
-      const response = await fetch(`${apiUrl}/users`);
-      if (!response.ok) throw new Error(`Error: ${response.statusText}`);
-      const data = await response.json();
-      setUsers(data);
+      setLoading(true);
+      setError(null);
+      
+      // Fetch users
+      const usersResponse = await fetch(USER_SERVICE_URL);
+      if (!usersResponse.ok) throw new Error(`Users API error: ${usersResponse.status}`);
+      const usersData = await usersResponse.json();
+      setUsers(usersData);
+
+      // Fetch products
+      const productsResponse = await fetch(PRODUCT_SERVICE_URL);
+      if (!productsResponse.ok) throw new Error(`Products API error: ${productsResponse.status}`);
+      const productsData = await productsResponse.json();
+      setProducts(productsData);
+
     } catch (err) {
-      console.error("Error fetching users:", err);
-      setError(prev => ({ ...prev, users: err.message }));
+      console.error('Error fetching data:', err);
+      setError(err.message);
     } finally {
-      setLoading(prev => ({ ...prev, users: false }));
+      setLoading(false);
     }
   };
 
-  const fetchProducts = async () => {
-    setLoading(prev => ({ ...prev, products: true }));
-    setError(prev => ({ ...prev, products: null }));
-    
-    try {
-      const response = await fetch(`${apiUrl}/products`);
-      if (!response.ok) throw new Error(`Error: ${response.statusText}`);
-      const data = await response.json();
-      setProducts(data);
-    } catch (err) {
-      console.error("Error fetching products:", err);
-      setError(prev => ({ ...prev, products: err.message }));
-    } finally {
-      setLoading(prev => ({ ...prev, products: false }));
-    }
-  };
-
-  const handleUserSubmit = async (e) => {
+  const createUser = async (e) => {
     e.preventDefault();
-    setLoading(prev => ({ ...prev, users: true }));
-    
     try {
-      const response = await fetch(`${apiUrl}/users`, {
+      const response = await fetch(USER_SERVICE_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify(newUser),
       });
       
-      if (!response.ok) throw new Error(`Error: ${response.statusText}`);
+      if (!response.ok) throw new Error(`Error creating user: ${response.status}`);
       
-      setNewUser({ name: '', email: '' });
-      fetchUsers();
+      setNewUser({ name: '', email: '', password: '' });
+      fetchData(); // Refresh data
     } catch (err) {
-      console.error("Error creating user:", err);
-      setError(prev => ({ ...prev, users: err.message }));
-    } finally {
-      setLoading(prev => ({ ...prev, users: false }));
+      console.error('Error creating user:', err);
+      setError(err.message);
     }
   };
 
-  const handleProductSubmit = async (e) => {
+  const createProduct = async (e) => {
     e.preventDefault();
-    setLoading(prev => ({ ...prev, products: true }));
-    
     try {
-      const response = await fetch(`${apiUrl}/products`, {
+      const productData = {
+        ...newProduct,
+        price: parseFloat(newProduct.price)
+      };
+      
+      const response = await fetch(PRODUCT_SERVICE_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...newProduct,
-          price: parseFloat(newProduct.price),
-        }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(productData),
       });
       
-      if (!response.ok) throw new Error(`Error: ${response.statusText}`);
+      if (!response.ok) throw new Error(`Error creating product: ${response.status}`);
       
-      setNewProduct({ name: '', price: '' });
-      fetchProducts();
+      setNewProduct({ name: '', description: '', price: '' });
+      fetchData(); // Refresh data
     } catch (err) {
-      console.error("Error creating product:", err);
-      setError(prev => ({ ...prev, products: err.message }));
-    } finally {
-      setLoading(prev => ({ ...prev, products: false }));
+      console.error('Error creating product:', err);
+      setError(err.message);
     }
   };
 
+  if (loading) {
+    return <div className="App"><h1>Cargando...</h1></div>;
+  }
+
   return (
-    <div className="app-container">
-      <h1>Gestor de Usuarios y Productos</h1>
+    <div className="App">
+      <header className="App-header">
+        <h1>AppGestión</h1>
+        <p>Sistema de gestión de usuarios y productos</p>
+      </header>
 
-      {/* Formulario Usuarios */}
-      <div className="form-container">
-        <h2>Crear Usuario</h2>
-        <form onSubmit={handleUserSubmit}>
-          <input
-            type="text"
-            placeholder="Nombre"
-            value={newUser.name}
-            onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
-            disabled={loading.users}
-            required
-          />
-          <input
-            type="email"
-            placeholder="Email"
-            value={newUser.email}
-            onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
-            disabled={loading.users}
-            required
-          />
-          <button type="submit" disabled={loading.users}>
-            {loading.users ? 'Guardando...' : 'Guardar'}
-          </button>
-        </form>
-        {error.users && <p className="error-message">Error: {error.users}</p>}
-      </div>
+      {error && (
+        <div className="error">
+          <p>Error: {error}</p>
+          <button onClick={fetchData}>Reintentar</button>
+        </div>
+      )}
 
-      {/* Formulario Productos */}
-      <div className="form-container">
-        <h2>Crear Producto</h2>
-        <form onSubmit={handleProductSubmit}>
-          <input
-            type="text"
-            placeholder="Nombre del producto"
-            value={newProduct.name}
-            onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
-            disabled={loading.products}
-            required
-          />
-          <input
-            type="number"
-            step="0.01"
-            placeholder="Precio"
-            value={newProduct.price}
-            onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
-            disabled={loading.products}
-            required
-          />
-          <button type="submit" disabled={loading.products}>
-            {loading.products ? 'Guardando...' : 'Guardar'}
-          </button>
-        </form>
-        {error.products && <p className="error-message">Error: {error.products}</p>}
-      </div>
-
-      {/* Listados */}
-      <div className="lists-container">
-        <div className="list">
-          <h2>Usuarios Registrados</h2>
-          {loading.users && <p>Cargando usuarios...</p>}
-          {!loading.users && users.length === 0 && !error.users && <p>No hay usuarios registrados.</p>}
+      <main>
+        <section>
+          <h2>Usuarios ({users.length})</h2>
+          <form onSubmit={createUser}>
+            <input
+              type="text"
+              placeholder="Nombre"
+              value={newUser.name}
+              onChange={(e) => setNewUser({...newUser, name: e.target.value})}
+              required
+            />
+            <input
+              type="email"
+              placeholder="Email"
+              value={newUser.email}
+              onChange={(e) => setNewUser({...newUser, email: e.target.value})}
+              required
+            />
+            <input
+              type="password"
+              placeholder="Contraseña"
+              value={newUser.password}
+              onChange={(e) => setNewUser({...newUser, password: e.target.value})}
+              required
+            />
+            <button type="submit">Crear Usuario</button>
+          </form>
+          
           <ul>
-            {users.map((user) => (
+            {users.map(user => (
               <li key={user.id}>
-                {user.name} - {user.email}
+                <strong>{user.name}</strong> - {user.email}
               </li>
             ))}
           </ul>
-        </div>
+        </section>
 
-        <div className="list">
-          <h2>Productos Disponibles</h2>
-          {loading.products && <p>Cargando productos...</p>}
-          {!loading.products && products.length === 0 && !error.products && <p>No hay productos disponibles.</p>}
+        <section>
+          <h2>Productos ({products.length})</h2>
+          <form onSubmit={createProduct}>
+            <input
+              type="text"
+              placeholder="Nombre del producto"
+              value={newProduct.name}
+              onChange={(e) => setNewProduct({...newProduct, name: e.target.value})}
+              required
+            />
+            <input
+              type="text"
+              placeholder="Descripción"
+              value={newProduct.description}
+              onChange={(e) => setNewProduct({...newProduct, description: e.target.value})}
+            />
+            <input
+              type="number"
+              step="0.01"
+              placeholder="Precio"
+              value={newProduct.price}
+              onChange={(e) => setNewProduct({...newProduct, price: e.target.value})}
+              required
+            />
+            <button type="submit">Crear Producto</button>
+          </form>
+          
           <ul>
-            {products.map((product) => (
+            {products.map(product => (
               <li key={product.id}>
-                {product.name} - ${product.price.toFixed(2)}
+                <strong>{product.name}</strong> - ${product.price}
+                <br />
+                <small>{product.description}</small>
               </li>
             ))}
           </ul>
-        </div>
-      </div>
+        </section>
+      </main>
     </div>
   );
 }

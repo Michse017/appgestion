@@ -1,27 +1,16 @@
 ---
 # Tareas principales para el rol appgestion
 
-- name: Instalar dependencias de Docker
+- name: Instalar dependencias del sistema
   apt:
     name:
       - docker.io
       - docker-compose
+      - python3-pip
+      - curl
+      - awscli
     state: present
-
-- name: Asegurar que Docker está iniciado y habilitado
-  systemd:
-    name: docker
-    state: started
-    enabled: yes
-
-- name: Crear grupos de redes Docker
-  shell: |
-    docker network ls | grep {{ item }} || docker network create {{ item }}
-  changed_when: false
-  with_items:
-    - frontend-network
-    - backend-network
-    - db-network
+    update_cache: yes
 
 - name: Instalar boto3 para AWS
   pip:
@@ -30,16 +19,48 @@
       - botocore
     state: present
 
+- name: Asegurar que Docker está iniciado y habilitado
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Add ubuntu user to docker group
+  user:
+    name: ubuntu
+    groups: docker
+    append: yes
+
+- name: Fix Docker socket permissions
+  file:
+    path: /var/run/docker.sock
+    owner: root
+    group: docker
+    mode: '0664'
+
+- name: Reset ssh connection to allow user changes to affect current session
+  meta: reset_connection
+
+- name: Create application directory
+  file:
+    path: "{{ app_dir }}"
+    state: directory
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+
 - name: Obtener credenciales de base de datos desde AWS Secrets Manager
   shell: |
     aws secretsmanager get-secret-value \
-      --region {{ aws_region }} \
-      --secret-id {{ project_name }}-db-credentials \
+      --region {{ region }} \
+      --secret-id {{ db_secret_name }} \
       --query SecretString \
       --output text
   register: db_credentials_json
   no_log: true
   changed_when: false
+  environment:
+    AWS_DEFAULT_REGION: "{{ region }}"
 
 - name: Parsear credenciales DB a variables
   set_fact:
@@ -49,13 +70,15 @@
 - name: Obtener credenciales de DockerHub desde AWS Secrets Manager
   shell: |
     aws secretsmanager get-secret-value \
-      --region {{ aws_region }} \
-      --secret-id {{ project_name }}-docker-credentials \
+      --region {{ region }} \
+      --secret-id {{ docker_secret_name }} \
       --query SecretString \
       --output text
   register: docker_credentials_json
   no_log: true
   changed_when: false
+  environment:
+    AWS_DEFAULT_REGION: "{{ region }}"
 
 - name: Parsear credenciales Docker a variables
   set_fact:
@@ -65,6 +88,7 @@
 - name: Login en DockerHub
   shell: |
     echo '{{ docker_creds.password }}' | docker login -u '{{ docker_creds.username }}' --password-stdin
+  become_user: ubuntu
   no_log: true
   changed_when: false
 
@@ -72,54 +96,34 @@
   template:
     src: .env.j2
     dest: "{{ app_dir }}/.env"
-    owner: root
-    group: root
+    owner: ubuntu
+    group: ubuntu
     mode: '0600'
 
-# CORRECCIÓN: Crear estructura de directorios para Nginx
 - name: Crear directorio para configuración de Nginx
   file:
     path: "{{ app_dir }}/nginx-config"
     state: directory
-    owner: root
-    group: root
+    owner: ubuntu
+    group: ubuntu
     mode: '0755'
 
-# CORRECCIÓN: Crear configuración de nginx en ubicación específica
-- name: Crear configuración de nginx
+- name: Copiar configuración de nginx desde template
   template:
     src: nginx.conf
     dest: "{{ app_dir }}/nginx-config/nginx.conf"
-    owner: root
-    group: root
+    owner: ubuntu
+    group: ubuntu
     mode: '0644'
 
-- name: Verificar el contenido del archivo nginx.conf
-  command: cat {{ app_dir }}/nginx-config/nginx.conf
-  register: nginx_conf_content
-  changed_when: false
-  check_mode: no
-
-- name: Crear directorio SSL
-  file:
-    path: "{{ app_dir }}/nginx-config/ssl"
-    state: directory
-    mode: '0755'
-
-- name: Crear docker-compose.yml (con nueva configuración de nginx)
+- name: Crear docker-compose.yml
   template:
     src: docker-compose.yml.j2
     dest: "{{ app_dir }}/docker-compose.yml"
-    owner: root
-    group: root
+    owner: ubuntu
+    group: ubuntu
     mode: '0644'
 
-- name: Detener contenedores existentes (si los hay)
-  shell: "cd {{ app_dir }} && docker-compose down"
-  ignore_errors: yes
-  changed_when: false
-
-# CORRECCIÓN: Agregar verificación adicional antes de iniciar contenedores
 - name: Verificar la existencia de archivos críticos
   stat:
     path: "{{ item }}"
@@ -127,16 +131,54 @@
   with_items:
     - "{{ app_dir }}/nginx-config/nginx.conf"
     - "{{ app_dir }}/docker-compose.yml"
+    - "{{ app_dir }}/.env"
 
 - name: Mostrar estado de archivos críticos
   debug:
     msg: "Archivo {{ item.item }} existe: {{ item.stat.exists }}, tamaño: {{ item.stat.size|default(0) }} bytes"
   with_items: "{{ critical_files.results }}"
 
+- name: Fallar si algún archivo crítico no existe
+  fail:
+    msg: "El archivo {{ item.item }} no existe o está vacío"
+  when: not item.stat.exists or item.stat.size == 0
+  with_items: "{{ critical_files.results }}"
+
+- name: Detener contenedores existentes (si los hay)
+  shell: "cd {{ app_dir }} && docker-compose down"
+  become_user: ubuntu
+  ignore_errors: yes
+  changed_when: false
+
+- name: Pull de imágenes Docker
+  shell: "cd {{ app_dir }} && docker-compose pull"
+  become_user: ubuntu
+  register: docker_pull_result
+  changed_when: docker_pull_result.rc == 0
+
+- name: Mostrar resultado del pull
+  debug:
+    var: docker_pull_result.stdout_lines
+
 - name: Iniciar contenedores con docker-compose
   shell: "cd {{ app_dir }} && docker-compose up -d"
+  become_user: ubuntu
   register: docker_compose_up
   changed_when: docker_compose_up.rc == 0
+
+- name: Mostrar resultado del docker-compose up
+  debug:
+    var: docker_compose_up.stdout_lines
+
+- name: Verificar que los contenedores están ejecutándose
+  shell: "cd {{ app_dir }} && docker-compose ps"
+  become_user: ubuntu
+  register: container_status
+  changed_when: false
+
+- name: Mostrar estado de contenedores
+  debug:
+    var: container_status.stdout_lines
 
 - name: Esperar que los servicios estén disponibles
   wait_for:
@@ -145,14 +187,84 @@
     timeout: 300
     delay: 10
   with_items:
+    - 3001  # user-service
+    - 3002  # product-service
+    - 80    # nginx
+
+- name: Verificar health endpoints
+  uri:
+    url: "http://localhost:{{ item }}/health"
+    method: GET
+    status_code: 200
+    timeout: 30
+  with_items:
     - 3001
     - 3002
+  retries: 5
+  delay: 10
+  register: health_check_results
+  ignore_errors: yes
 
-- name: Configurar health checks
+- name: Mostrar resultados de health checks
+  debug:
+    msg: "Health check para puerto {{ item.item }}: {{ 'OK' if item.status == 200 else 'FAILED' }}"
+  with_items: "{{ health_check_results.results }}"
+
+- name: Verificar endpoint principal de nginx
+  uri:
+    url: "http://localhost/"
+    method: GET
+    status_code: 200
+    timeout: 30
+  retries: 3
+  delay: 5
+  register: nginx_check
+  ignore_errors: yes
+
+- name: Mostrar resultado de nginx
+  debug:
+    msg: "Nginx endpoint: {{ 'OK' if nginx_check.status == 200 else 'FAILED' }}"
+
+- name: Configurar health checks con cron
   cron:
     name: "health_check_{{ item.name }}"
     minute: "*/5"
     job: "curl -s http://localhost:{{ item.port }}/health > /dev/null || (cd {{ app_dir }} && docker-compose restart {{ item.name }})"
+    user: ubuntu
   with_items:
     - { name: "user-service", port: "3001" }
     - { name: "product-service", port: "3002" }
+
+- name: Crear script de monitoreo
+  template:
+    src: monitor.sh.j2
+    dest: "{{ app_dir }}/monitor.sh"
+    owner: ubuntu
+    group: ubuntu
+    mode: '0755'
+  vars:
+    services:
+      - { name: "user-service", port: "3001" }
+      - { name: "product-service", port: "3002" }
+      - { name: "nginx-proxy", port: "80" }
+
+- name: Mostrar información de despliegue
+  debug:
+    msg: |
+      ===== RESUMEN DEL DESPLIEGUE =====
+      Aplicación desplegada en: {{ app_dir }}
+      Servicios disponibles:
+      - User Service: http://{{ ansible_default_ipv4.address }}:3001
+      - Product Service: http://{{ ansible_default_ipv4.address }}:3002
+      - API Gateway (Nginx): http://{{ ansible_default_ipv4.address }}
+      
+      Para verificar el estado:
+      - ssh ubuntu@{{ ansible_default_ipv4.address }}
+      - cd {{ app_dir }}
+      - docker-compose ps
+      - ./monitor.sh
+      
+      Logs disponibles:
+      - docker-compose logs user-service
+      - docker-compose logs product-service
+      - docker-compose logs nginx-proxy

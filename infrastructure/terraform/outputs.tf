@@ -9,7 +9,7 @@ output "backend_public_ip" {
 
 output "ssh_connection" {
   description = "Comando para conectarse por SSH al servidor backend"
-  value       = "ssh -i ${var.ssh_key_name}.pem ubuntu@${aws_instance.backend.public_ip}"
+  value       = "ssh -i ${var.ssh_key_path} ubuntu@${aws_instance.backend.public_ip}"
 }
 
 # ======================================================
@@ -32,6 +32,11 @@ output "product_db_endpoint" {
 # INFORMACIÓN DE FRONTEND
 # ======================================================
 
+output "frontend_bucket_name" {
+  description = "Nombre del bucket S3 para el frontend"
+  value       = aws_s3_bucket.frontend.bucket
+}
+
 output "s3_website_endpoint" {
   description = "Endpoint del sitio web S3"
   value       = aws_s3_bucket_website_configuration.frontend.website_endpoint
@@ -40,6 +45,11 @@ output "s3_website_endpoint" {
 output "frontend_cloudfront_domain" {
   description = "Dominio CloudFront para el frontend"
   value       = aws_cloudfront_distribution.frontend.domain_name
+}
+
+output "cloudfront_distribution_id" {
+  description = "ID de la distribución CloudFront"
+  value       = aws_cloudfront_distribution.frontend.id
 }
 
 output "frontend_url" {
@@ -72,15 +82,15 @@ output "api_product_endpoint" {
 }
 
 # ======================================================
-# INFORMACIÓN DE SECRETS
+# INFORMACIÓN DE SECRETOS
 # ======================================================
 
-output "db_credentials_secret_arn" {
-  description = "ARN del secreto de credenciales de base de datos"
-  value       = aws_secretsmanager_secret.db_credentials.arn
+output "db_secret_name" {
+  description = "Nombre del secreto de base de datos en AWS Secrets Manager"
+  value       = aws_secretsmanager_secret.db_credentials.name
 }
 
-output "aws_cli_get_db_secret" {
-  description = "Comando AWS CLI para obtener secreto de base de datos"
-  value       = "aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_credentials.name} --query SecretString --output text"
+output "docker_secret_name" {
+  description = "Nombre del secreto de Docker en AWS Secrets Manager"
+  value       = aws_secretsmanager_secret.docker_credentials.name
 }

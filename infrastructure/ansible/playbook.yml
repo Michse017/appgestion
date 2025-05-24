@@ -1,47 +1,141 @@
 ---
-# Playbook principal para AppGestion
-- name: Configurar servidores para AppGestion
+- name: Deploy AppGestion
   hosts: backend
   become: yes
   vars:
-    app_dir: /opt/appgestion
-    aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-east-1', true) }}"
-    project_name: "{{ lookup('env', 'PROJECT_NAME') | default('appgestion', true) }}"
-    app_environment: "{{ lookup('env', 'ENVIRONMENT') | default('prod', true) }}"
-
-  pre_tasks:
-    - name: Actualizar caché de apt
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+  
+  tasks:
+    - name: Update package cache
       apt:
         update_cache: yes
         cache_valid_time: 3600
 
-    - name: Instalar dependencias del sistema
+    - name: Install required packages
       apt:
         name:
-          - apt-transport-https
-          - ca-certificates
+          - docker.io
+          - docker-compose
           - curl
-          - software-properties-common
           - python3-pip
+          - python3-boto3
           - awscli
-          - jq
         state: present
 
-    - name: Crear directorio de la aplicación
+    - name: Start and enable Docker service
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+        - name: Add ubuntu user to docker group
+      user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Fix Docker socket permissions
       file:
-        path: "{{ app_dir }}"
-        state: directory
-        mode: '0755'
+        path: /var/run/docker.sock
+        owner: root
+        group: docker
+        mode: '0664'
 
-  roles:
-    - appgestion
+    - name: Reset ssh connection to allow user changes to affect current session
+      meta: reset_connection
 
-  post_tasks:
-    - name: Verificar estado de los contenedores
-      shell: "docker ps"
-      register: container_status
-      changed_when: false
+    - name: Verify Docker access for ubuntu user
+      become_user: ubuntu
+      command: docker ps
+      register: docker_test
+      ignore_errors: yes
 
-    - name: Mostrar información de los contenedores
-      debug:
-        var: container_status.stdout_lines
+    - name: Restart Docker service if needed
+      systemd:
+        name: docker
+        state: restarted
+      when: docker_test.failed
+
+    - name: Get database credentials from AWS Secrets Manager
+      shell: |
+        aws secretsmanager get-secret-value --secret-id {{ db_secret_name }} --region {{ region }} --query SecretString --output text
+      register: db_secret_result
+      environment:
+        AWS_DEFAULT_REGION: "{{ region }}"
+
+    - name: Parse database credentials
+      set_fact:
+        db_creds: "{{ db_secret_result.stdout | from_json }}"
+
+    - name: Get Docker credentials from AWS Secrets Manager
+      shell: |
+        aws secretsmanager get-secret-value --secret-id {{ docker_secret_name }} --region {{ region }} --query SecretString --output text
+      register: docker_secret_result
+      environment:
+        AWS_DEFAULT_REGION: "{{ region }}"
+
+    - name: Parse Docker credentials
+      set_fact:
+        docker_creds: "{{ docker_secret_result.stdout | from_json }}"
+
+    - name: Login to DockerHub
+      docker_login:
+        username: "{{ docker_creds.username }}"
+        password: "{{ docker_creds.password }}"
+      become_user: ubuntu
+
+    - name: Create docker-compose file
+      template:
+        src: roles/appgestion/templates/docker-compose.yml.j2
+        dest: /opt/appgestion/docker-compose.yml
+        owner: ubuntu
+        group: ubuntu
+        mode: '0644'
+
+    - name: Create environment file
+      template:
+        src: roles/appgestion/templates/.env.j2
+        dest: /opt/appgestion/.env
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+
+    - name: Pull Docker images
+      shell: |
+        cd /opt/appgestion
+        docker-compose pull
+      become_user: ubuntu
+
+    - name: Stop existing containers
+      shell: |
+        cd /opt/appgestion
+        docker-compose down || true
+      become_user: ubuntu
+
+    - name: Start services with docker-compose
+      shell: |
+        cd /opt/appgestion
+        docker-compose up -d
+      become_user: ubuntu
+
+    - name: Wait for services to be ready
+      wait_for:
+        port: "{{ item }}"
+        host: localhost
+        delay: 10
+        timeout: 300
+      loop:
+        - 3001
+        - 3002
+        - 80
+
+    - name: Verify services are running
+      uri:
+        url: "http://localhost:{{ item }}/health"
+        method: GET
+        status_code: 200
+      loop:
+        - 3001
+        - 3002
+      retries: 5
+      delay: 10

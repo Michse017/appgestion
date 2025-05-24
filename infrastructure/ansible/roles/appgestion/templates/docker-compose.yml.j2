@@ -1,36 +1,30 @@
 version: '3.8'
 
-# Definición de redes aisladas para mayor seguridad
 networks:
-  frontend-network:
-    external: true
-  backend-network:
-    external: true
-  db-network:
-    external: true
+  appgestion-network:
+    driver: bridge
 
 services:
   user-service:
     image: {{ docker_creds.username }}/appgestion-user-service:latest
     container_name: user-service
-    ports:
-      - "3001:3001"
     environment:
-      - FLASK_DEBUG=0
       - POSTGRES_HOST={{ db_creds.host_user }}
       - POSTGRES_DB={{ db_creds.db_name_user }}
       - POSTGRES_USER={{ db_creds.username }}
       - POSTGRES_PASSWORD={{ db_creds.password }}
       - POSTGRES_PORT={{ db_creds.port }}
-    restart: unless-stopped
+    ports:
+      - "3001:3001"
     networks:
-      - backend-network
-      - db-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
+      - appgestion-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
     logging:
       driver: "json-file"
       options:
@@ -40,48 +34,43 @@ services:
   product-service:
     image: {{ docker_creds.username }}/appgestion-product-service:latest
     container_name: product-service
-    ports:
-      - "3002:3002"
     environment:
-      - FLASK_DEBUG=0
       - POSTGRES_HOST={{ db_creds.host_product }}
       - POSTGRES_DB={{ db_creds.db_name_product }}
       - POSTGRES_USER={{ db_creds.username }}
       - POSTGRES_PASSWORD={{ db_creds.password }}
       - POSTGRES_PORT={{ db_creds.port }}
-    restart: unless-stopped
+    ports:
+      - "3002:3002"
     networks:
-      - backend-network
-      - db-network
-    deploy:
-      resources:
-        limits:
-          cpus: '0.5'
-          memory: 512M
+      - appgestion-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-  # Nginx como proxy inverso para enrutar solicitudes - CORREGIDA configuración de volúmenes
-  nginx:
-    image: nginx:alpine
+  nginx-proxy:
+    image: {{ docker_creds.username }}/appgestion-nginx:latest
     container_name: nginx-proxy
     ports:
       - "80:80"
       - "443:443"
-    volumes:
-      # CORREGIDO: Path actualizado para evitar problemas de montaje
-      - ./nginx-config/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx-config/ssl:/etc/nginx/ssl:ro
     depends_on:
-      - user-service
-      - product-service
-    restart: unless-stopped
+      user-service:
+        condition: service_healthy
+      product-service:
+        condition: service_healthy
     networks:
-      - frontend-network
-      - backend-network
+      - appgestion-network
+    restart: unless-stopped
     logging:
       driver: "json-file"
       options:

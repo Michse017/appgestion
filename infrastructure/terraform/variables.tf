@@ -42,36 +42,36 @@ variable "private_subnet_cidrs" {
   default     = ["10.0.3.0/24", "10.0.4.0/24"]
 }
 
-variable "ssh_key_path" {
-  description = "Ruta al archivo de clave privada SSH (.pem) para Ansible"
-  type        = string
-}
-
 variable "availability_zones" {
-  description = "Lista de zonas de disponibilidad"
+  description = "Zonas de disponibilidad para las subnets"
   type        = list(string)
   default     = ["us-east-1a", "us-east-1b"]
 }
 
 # ======================================================
-# COMPUTE - EC2
+# INSTANCIAS EC2
 # ======================================================
 
-variable "ssh_key_name" {
-  description = "Nombre de la clave SSH para acceder a instancias EC2"
-  type        = string
-}
-
 variable "instance_type" {
-  description = "Tipo de instancia EC2 para los servidores"
+  description = "Tipo de instancia EC2"
   type        = string
-  default     = "t3.small"
+  default     = "t3.micro"
 }
 
 variable "ec2_ami" {
-  description = "AMI ID para instancias EC2"
+  description = "AMI para las instancias EC2"
   type        = string
-  default     = "ami-0c7217cdde317cfec" # Ubuntu 22.04 LTS actual
+  default     = "ami-0c02fb55956c7d316" # Ubuntu 22.04 LTS
+}
+
+variable "ssh_key_name" {
+  description = "Nombre del key pair para acceso SSH"
+  type        = string
+}
+
+variable "ssh_key_path" {
+  description = "Ruta completa al archivo de clave SSH privada"
+  type        = string
 }
 
 # ======================================================
@@ -79,19 +79,19 @@ variable "ec2_ami" {
 # ======================================================
 
 variable "db_instance_class" {
-  description = "Tipo de instancia para bases de datos RDS"
+  description = "Clase de instancia para RDS"
   type        = string
   default     = "db.t3.micro"
 }
 
 variable "db_username" {
-  description = "Nombre de usuario principal para bases de datos"
+  description = "Usuario administrador de la base de datos"
   type        = string
-  sensitive   = true
+  default     = "dbadmin"
 }
 
 variable "db_password" {
-  description = "Contraseña para bases de datos"
+  description = "Contraseña del usuario administrador"
   type        = string
   sensitive   = true
 }
@@ -120,7 +120,7 @@ variable "domain_name" {
 variable "frontend_bucket_name" {
   description = "Nombre del bucket S3 para el frontend"
   type        = string
-  default     = null # Se genera automáticamente si es null
+  default     = null
 }
 
 # ======================================================

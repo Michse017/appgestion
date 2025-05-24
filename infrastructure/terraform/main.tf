@@ -363,6 +363,15 @@ resource "aws_db_instance" "user_db" {
     Name        = "${var.project_name}-user-db"
     Environment = var.environment
   }
+
+  # Habilitamos monitoreo básico
+  monitoring_interval = 60
+  monitoring_role_arn = aws_iam_role.rds_monitoring_role.arn
+  
+  # Habilitamos backups automáticos
+  backup_retention_period = 7
+  backup_window = "03:00-05:00"
+  maintenance_window = "Mon:00:00-Mon:03:00"
 }
 
 # Base de datos para el servicio de productos
@@ -385,11 +394,53 @@ resource "aws_db_instance" "product_db" {
     Name        = "${var.project_name}-product-db"
     Environment = var.environment
   }
+  
+  # Habilitamos monitoreo básico
+  monitoring_interval = 60
+  monitoring_role_arn = aws_iam_role.rds_monitoring_role.arn
+  
+  # Habilitamos backups automáticos
+  backup_retention_period = 7
+  backup_window = "03:00-05:00"
+  maintenance_window = "Mon:00:00-Mon:03:00"
+}
+
+# Rol para monitoreo de RDS
+resource "aws_iam_role" "rds_monitoring_role" {
+  name = "${var.project_name}-rds-monitoring-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "monitoring.rds.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring_attachment" {
+  role       = aws_iam_role.rds_monitoring_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
 # ======================================================
 # INSTANCIAS EC2
 # ======================================================
+
+# IP Elástica para instancia EC2
+resource "aws_eip" "backend" {
+  vpc = true
+  
+  tags = {
+    Name        = "${var.project_name}-backend-eip"
+    Environment = var.environment
+  }
+}
 
 # EC2 para servicios de backend
 resource "aws_instance" "backend" {
@@ -400,19 +451,43 @@ resource "aws_instance" "backend" {
   vpc_security_group_ids = [aws_security_group.ec2.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   
-  # Script de arranque básico
+  # Script de arranque mejorado
   user_data = <<-EOF
               #!/bin/bash
               apt-get update
-              apt-get install -y python3-pip python3-boto3 docker.io docker-compose
+              apt-get install -y python3-pip python3-boto3 docker.io docker-compose awscli
               systemctl enable docker
               systemctl start docker
+              usermod -aG docker ubuntu
+              
+              # Crear directorio para aplicación
+              mkdir -p /home/ubuntu/appgestion
+              chown -R ubuntu:ubuntu /home/ubuntu/appgestion
+              
+              # Instalar dependencias para monitoreo
+              apt-get install -y jq htop net-tools
               EOF
   
   tags = {
     Name        = "${var.project_name}-backend"
     Environment = var.environment
   }
+  
+  # Añadir volumen para datos persistentes
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp2"
+    delete_on_termination = false
+    tags = {
+      Name = "${var.project_name}-backend-volume"
+    }
+  }
+}
+
+# Asociar IP Elástica a la instancia EC2
+resource "aws_eip_association" "backend" {
+  instance_id   = aws_instance.backend.id
+  allocation_id = aws_eip.backend.id
 }
 
 # ======================================================
@@ -422,6 +497,7 @@ resource "aws_instance" "backend" {
 # Nombre del bucket S3 para el frontend
 locals {
   s3_bucket_name = var.frontend_bucket_name != null ? var.frontend_bucket_name : "${var.project_name}-frontend-${random_string.suffix.result}"
+  frontend_origin_id = "S3Origin"
 }
 
 # Genera un sufijo aleatorio para el nombre del bucket
@@ -441,20 +517,7 @@ resource "aws_s3_bucket" "frontend" {
   }
 }
 
-# Configuración del bucket para sitio web
-resource "aws_s3_bucket_website_configuration" "frontend" {
-  bucket = aws_s3_bucket.frontend.id
-  
-  index_document {
-    suffix = "index.html"
-  }
-  
-  error_document {
-    key = "index.html"
-  }
-}
-
-# ACL para el bucket
+# Configuración de ACL para S3
 resource "aws_s3_bucket_ownership_controls" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   rule {
@@ -462,34 +525,34 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
   }
 }
 
-# Primero, actualiza la configuración de acceso público
+# Bloquear acceso público al bucket S3
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
-  block_public_acls       = false
-  block_public_policy     = false  # Esto permite políticas públicas
-  ignore_public_acls      = false
-  restrict_public_buckets = false
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
 }
 
-# La política del bucket debe depender explícitamente de esta configuración
-resource "aws_s3_bucket_policy" "frontend" {
-  depends_on = [
-    aws_s3_bucket_ownership_controls.frontend,
-    aws_s3_bucket_public_access_block.frontend,  # Agregar esta dependencia
-  ]
+# CloudFront OAI para S3
+resource "aws_cloudfront_origin_access_identity" "frontend" {
+  comment = "OAI for ${var.project_name} frontend"
+}
 
+# Dar acceso a CloudFront para leer archivos de S3
+resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-  
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "PublicReadGetObject"
-        Effect    = "Allow"
-        Principal = "*"
         Action    = "s3:GetObject"
+        Effect    = "Allow"
         Resource  = "${aws_s3_bucket.frontend.arn}/*"
-      },
+        Principal = {
+          AWS = aws_cloudfront_origin_access_identity.frontend.iam_arn
+        }
+      }
     ]
   })
 }
@@ -497,26 +560,24 @@ resource "aws_s3_bucket_policy" "frontend" {
 # CloudFront distribution para el frontend
 resource "aws_cloudfront_distribution" "frontend" {
   origin {
-    domain_name = aws_s3_bucket_website_configuration.frontend.website_endpoint
-    origin_id   = "S3Origin"
+    domain_name = aws_s3_bucket.frontend.bucket_regional_domain_name
+    origin_id   = local.frontend_origin_id
     
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "http-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
+    s3_origin_config {
+      origin_access_identity = aws_cloudfront_origin_access_identity.frontend.cloudfront_access_identity_path
     }
   }
   
   enabled             = true
   is_ipv6_enabled     = true
   default_root_object = "index.html"
+  price_class         = "PriceClass_100"  # Usar solo las ubicaciones más económicas
   
   # Configuración de caché
   default_cache_behavior {
-    allowed_methods  = ["GET", "HEAD"]
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD"]
-    target_origin_id = "S3Origin"
+    target_origin_id = local.frontend_origin_id
     
     forwarded_values {
       query_string = false
@@ -530,6 +591,29 @@ resource "aws_cloudfront_distribution" "frontend" {
     min_ttl                = 0
     default_ttl            = 3600
     max_ttl                = 86400
+    compress               = true
+  }
+  
+  # Configuración de caché para archivos estáticos
+  ordered_cache_behavior {
+    path_pattern     = "/static/*"
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = local.frontend_origin_id
+    
+    forwarded_values {
+      query_string = false
+      
+      cookies {
+        forward = "none"
+      }
+    }
+    
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 86400
+    max_ttl                = 31536000  # 1 año para archivos estáticos
+    compress               = true
   }
   
   # Restricciones geográficas
@@ -601,8 +685,8 @@ resource "aws_api_gateway_integration" "users_proxy" {
   http_method = aws_api_gateway_method.users_proxy.http_method
   
   type                    = "HTTP_PROXY"
-  # Corregido: eliminación de {proxy}
-  uri                     = "http://${aws_instance.backend.public_ip}:3001/users"
+  # Usamos la IP elástica para estabilidad
+  uri                     = "http://${aws_eip.backend.public_ip}:3001/users"
   integration_http_method = "ANY"
 }
 
@@ -628,8 +712,9 @@ resource "aws_api_gateway_integration_response" "users_proxy_integration_respons
   http_method = aws_api_gateway_method.users_proxy.http_method
   status_code = aws_api_gateway_method_response.users_proxy_response.status_code
   
+  # Corregido: Usar CloudFront como origen permitido en lugar de '*'
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin"      = "'*'",
+    "method.response.header.Access-Control-Allow-Origin"      = "'https://${aws_cloudfront_distribution.frontend.domain_name}'",
     "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
@@ -683,10 +768,11 @@ resource "aws_api_gateway_integration_response" "users_options_integration_respo
   http_method = aws_api_gateway_method.users_options.http_method
   status_code = aws_api_gateway_method_response.users_options_200.status_code
   
+  # Corregido: Usar CloudFront como origen permitido en lugar de '*'
   response_parameters = {
     "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
-    "method.response.header.Access-Control-Allow-Origin"      = "'*'",
+    "method.response.header.Access-Control-Allow-Origin"      = "'https://${aws_cloudfront_distribution.frontend.domain_name}'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
   }
 }
@@ -716,8 +802,8 @@ resource "aws_api_gateway_integration" "products_proxy" {
   http_method = aws_api_gateway_method.products_proxy.http_method
   
   type                    = "HTTP_PROXY"
-  # Corregido: eliminación de {proxy}
-  uri                     = "http://${aws_instance.backend.public_ip}:3002/products"
+  # Usamos la IP elástica para estabilidad
+  uri                     = "http://${aws_eip.backend.public_ip}:3002/products"
   integration_http_method = "ANY"
 }
 
@@ -743,8 +829,9 @@ resource "aws_api_gateway_integration_response" "products_proxy_integration_resp
   http_method = aws_api_gateway_method.products_proxy.http_method
   status_code = aws_api_gateway_method_response.products_proxy_response.status_code
   
+  # Corregido: Usar CloudFront como origen permitido en lugar de '*'
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin"      = "'*'",
+    "method.response.header.Access-Control-Allow-Origin"      = "'https://${aws_cloudfront_distribution.frontend.domain_name}'",
     "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
@@ -798,10 +885,11 @@ resource "aws_api_gateway_integration_response" "products_options_integration_re
   http_method = aws_api_gateway_method.products_options.http_method
   status_code = aws_api_gateway_method_response.products_options_200.status_code
   
+  # Corregido: Usar CloudFront como origen permitido en lugar de '*'
   response_parameters = {
     "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
-    "method.response.header.Access-Control-Allow-Origin"      = "'*'",
+    "method.response.header.Access-Control-Allow-Origin"      = "'https://${aws_cloudfront_distribution.frontend.domain_name}'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
   }
 }
@@ -819,6 +907,13 @@ resource "aws_api_gateway_deployment" "main" {
   
   rest_api_id = aws_api_gateway_rest_api.main.id
   stage_name  = var.environment
+  
+  # Asegurar que cada cambio en la API cause un nuevo despliegue
+  stage_description = "Deployment created at ${timestamp()}"
+  
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Habilitar CORS para el stage completo
@@ -828,8 +923,8 @@ resource "aws_api_gateway_method_settings" "all" {
   method_path = "*/*"
 
   settings {
-    metrics_enabled = false  # Cambiado a false
-    logging_level   = "OFF"  # Cambiado a OFF
+    metrics_enabled = false
+    logging_level   = "OFF"
   }
 }
 
@@ -840,8 +935,8 @@ resource "aws_api_gateway_method_settings" "all" {
 # Archivo local para inventario Ansible
 resource "local_file" "ansible_inventory" {
   content = templatefile("${path.module}/templates/inventory.tmpl", {
-    backend_ip = aws_instance.backend.public_ip,
-    ssh_key_path = var.ssh_key_path  // Usar la ruta completa del SSH como se solicitó
+    backend_ip = aws_eip.backend.public_ip,
+    ssh_key_path = var.ssh_key_path
   })
   filename = "${path.module}/../ansible/inventory/hosts.ini"
 }
@@ -861,22 +956,8 @@ resource "local_file" "ansible_vars" {
   filename = "${path.module}/../ansible/group_vars/all.yml"
 }
 
-# Provisionamiento con Ansible después de crear la infraestructura
-resource "null_resource" "ansible_provisioner" {
-  depends_on = [
-    aws_instance.backend,
-    aws_db_instance.user_db,
-    aws_db_instance.product_db,
-    local_file.ansible_inventory,
-    local_file.ansible_vars
-  ]
-  
-  # Ejecuta Ansible cuando cambia la IP de la instancia
-  triggers = {
-    instance_ip = aws_instance.backend.public_ip
-  }
-  
-  provisioner "local-exec" {
-    command = "cd ${path.module}/../ansible && ansible-playbook -i inventory/hosts.ini playbook.yml"
-  }
+# Output para SSH key path
+resource "local_file" "ssh_key_path_output" {
+  content  = var.ssh_key_path
+  filename = "${path.module}/ssh_key_path.txt"
 }
