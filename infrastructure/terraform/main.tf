@@ -89,7 +89,10 @@ resource "aws_eip" "nat" {
   }
 }
 
+# NAT Gateway condicional - solo se crea en producción
 resource "aws_nat_gateway" "main" {
+  count = var.environment == "production" ? 1 : 0
+  
   allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.public[0].id
   
@@ -114,13 +117,16 @@ resource "aws_route_table" "public" {
   }
 }
 
-# Tabla de rutas privada
+# Tabla de rutas privada (ahora con NAT Gateway condicional)
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
   
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
+  dynamic "route" {
+    for_each = var.environment == "production" ? [1] : []
+    content {
+      cidr_block     = "0.0.0.0/0"
+      nat_gateway_id = aws_nat_gateway.main[0].id
+    }
   }
   
   tags = {
@@ -343,11 +349,11 @@ resource "aws_db_subnet_group" "main" {
   }
 }
 
-# Base de datos para el servicio de usuarios
+# Base de datos para el servicio de usuarios (optimizada por entorno)
 resource "aws_db_instance" "user_db" {
   identifier           = "${var.project_name}-user-db"
-  allocated_storage    = 20
-  storage_type         = "gp2"
+  allocated_storage    = var.environment == "production" ? 20 : 10
+  storage_type         = var.environment == "production" ? "gp2" : "standard"
   engine               = "postgres"
   engine_version       = "13"
   instance_class       = var.db_instance_class
@@ -364,21 +370,21 @@ resource "aws_db_instance" "user_db" {
     Environment = var.environment
   }
 
-  # Habilitamos monitoreo básico
-  monitoring_interval = 60
-  monitoring_role_arn = aws_iam_role.rds_monitoring_role.arn
+  # Monitoreo optimizado por entorno
+  monitoring_interval = var.environment == "production" ? 60 : 0
+  monitoring_role_arn = var.environment == "production" ? aws_iam_role.rds_monitoring_role.arn : null
   
-  # Habilitamos backups automáticos
-  backup_retention_period = 7
+  # Backups optimizados por entorno
+  backup_retention_period = var.environment == "production" ? 7 : 1
   backup_window = "03:00-05:00"
   maintenance_window = "Mon:00:00-Mon:03:00"
 }
 
-# Base de datos para el servicio de productos
+# Base de datos para el servicio de productos (optimizada por entorno)
 resource "aws_db_instance" "product_db" {
   identifier           = "${var.project_name}-product-db"
-  allocated_storage    = 20
-  storage_type         = "gp2"
+  allocated_storage    = var.environment == "production" ? 20 : 10
+  storage_type         = var.environment == "production" ? "gp2" : "standard"
   engine               = "postgres"
   engine_version       = "13"
   instance_class       = var.db_instance_class
@@ -395,12 +401,12 @@ resource "aws_db_instance" "product_db" {
     Environment = var.environment
   }
   
-  # Habilitamos monitoreo básico
-  monitoring_interval = 60
-  monitoring_role_arn = aws_iam_role.rds_monitoring_role.arn
+  # Monitoreo optimizado por entorno
+  monitoring_interval = var.environment == "production" ? 60 : 0
+  monitoring_role_arn = var.environment == "production" ? aws_iam_role.rds_monitoring_role.arn : null
   
-  # Habilitamos backups automáticos
-  backup_retention_period = 7
+  # Backups optimizados por entorno
+  backup_retention_period = var.environment == "production" ? 7 : 1
   backup_window = "03:00-05:00"
   maintenance_window = "Mon:00:00-Mon:03:00"
 }
@@ -445,7 +451,7 @@ resource "aws_eip" "backend" {
 # EC2 para servicios de backend
 resource "aws_instance" "backend" {
   ami                    = var.ec2_ami
-  instance_type          = var.instance_type
+  instance_type          = var.environment == "production" ? var.instance_type : "t2.micro"
   key_name               = var.ssh_key_name
   subnet_id              = aws_subnet.public[0].id
   vpc_security_group_ids = [aws_security_group.ec2.id]
@@ -473,11 +479,11 @@ resource "aws_instance" "backend" {
     Environment = var.environment
   }
   
-  # Añadir volumen para datos persistentes
+  # Volumen optimizado - ahora se elimina con la instancia para evitar costos residuales
   root_block_device {
-    volume_size = 20
-    volume_type = "gp2"
-    delete_on_termination = false
+    volume_size = var.environment == "production" ? 20 : 10
+    volume_type = var.environment == "production" ? "gp2" : "standard"
+    delete_on_termination = true
     tags = {
       Name = "${var.project_name}-backend-volume"
     }
@@ -711,10 +717,9 @@ resource "aws_api_gateway_integration_response" "users_proxy_integration_respons
   resource_id = aws_api_gateway_resource.users.id
   http_method = aws_api_gateway_method.users_proxy.http_method
   status_code = aws_api_gateway_method_response.users_proxy_response.status_code
-  
-  # Corregido: Usar CloudFront como origen permitido en lugar de '*'
+
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin"      = "'https://${aws_cloudfront_distribution.frontend.domain_name}'",
+    "method.response.header.Access-Control-Allow-Origin" = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
     "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
@@ -768,11 +773,11 @@ resource "aws_api_gateway_integration_response" "users_options_integration_respo
   http_method = aws_api_gateway_method.users_options.http_method
   status_code = aws_api_gateway_method_response.users_options_200.status_code
   
-  # Corregido: Usar CloudFront como origen permitido en lugar de '*'
+  # Corregido: Aplicar condición de entorno consistente para CORS
   response_parameters = {
     "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
-    "method.response.header.Access-Control-Allow-Origin"      = "'https://${aws_cloudfront_distribution.frontend.domain_name}'",
+    "method.response.header.Access-Control-Allow-Origin"      = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
   }
 }
@@ -831,7 +836,7 @@ resource "aws_api_gateway_integration_response" "products_proxy_integration_resp
   
   # Corregido: Usar CloudFront como origen permitido en lugar de '*'
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Origin"      = "'https://${aws_cloudfront_distribution.frontend.domain_name}'",
+    "method.response.header.Access-Control-Allow-Origin" = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
     "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
@@ -885,11 +890,11 @@ resource "aws_api_gateway_integration_response" "products_options_integration_re
   http_method = aws_api_gateway_method.products_options.http_method
   status_code = aws_api_gateway_method_response.products_options_200.status_code
   
-  # Corregido: Usar CloudFront como origen permitido en lugar de '*'
+  # Corregido: Aplicar condición de entorno consistente para CORS
   response_parameters = {
     "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
-    "method.response.header.Access-Control-Allow-Origin"      = "'https://${aws_cloudfront_distribution.frontend.domain_name}'",
+    "method.response.header.Access-Control-Allow-Origin"      = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
   }
 }
@@ -916,15 +921,16 @@ resource "aws_api_gateway_deployment" "main" {
   }
 }
 
-# Habilitar CORS para el stage completo
+# Optimizar configuración de API Gateway según entorno
 resource "aws_api_gateway_method_settings" "all" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   stage_name  = aws_api_gateway_deployment.main.stage_name
   method_path = "*/*"
 
   settings {
-    metrics_enabled = false
-    logging_level   = "OFF"
+    # Solo habilitar métricas en producción
+    metrics_enabled = var.environment == "production"
+    logging_level   = var.environment == "production" ? "INFO" : "OFF"
   }
 }
 

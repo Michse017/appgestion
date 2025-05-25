@@ -98,7 +98,7 @@ SSH_KEY_NAME=$(grep ssh_key_name infrastructure/terraform/terraform.tfvars | sed
 
 if [ -z "$SSH_KEY_NAME" ]; then
   # Extraer el nombre base del archivo si no está especificado
-  SSH_KEY_NAME=$(basename "$SSH_KEY_PATH" .pem)
+  SSH_KEY_NAME=$(basename "$SSH_KEY_PATH" | sed -E 's/\.[^.]+$//')
   echo -e "${YELLOW}⚠️ ssh_key_name no especificado, usando: $SSH_KEY_NAME${NC}"
   # Actualizar el archivo terraform.tfvars
   sed -i '/ssh_key_name/d' infrastructure/terraform/terraform.tfvars
@@ -297,6 +297,10 @@ check_ec2_availability() {
 
 # Verificar que la instancia EC2 esté disponible
 check_ec2_availability || exit 1
+
+# Verificar configuración de Nginx
+echo -e "${YELLOW}Verificando configuración de Nginx...${NC}"
+ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" ubuntu@"$BACKEND_IP" "docker exec \$(docker ps -qf name=nginx) nginx -t"
 
 # Ejecutar Ansible
 echo -e "${GREEN}=== Configurando servicios con Ansible ===${NC}"
