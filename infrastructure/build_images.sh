@@ -1,5 +1,5 @@
 #!/bin/bash
-# build_images.sh - Script para construir y publicar imágenes Docker
+# build_images.sh - Script mejorado para construir imágenes Docker
 
 set -e
 
@@ -50,21 +50,36 @@ fi
 
 # Login en DockerHub
 echo -e "${YELLOW}Iniciando sesión en DockerHub...${NC}"
-echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
+echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin || {
+  echo -e "${RED}Error: No se pudo iniciar sesión en DockerHub${NC}"
+  exit 1
+}
 
 # Construir frontend para producción
 echo -e "${YELLOW}Construyendo frontend para producción...${NC}"
 cd frontend
 
-# Configurar variables de entorno para el build
-API_URL="https://api-gateway-placeholder"
-if [ -f "$PROJECT_ROOT/infrastructure/terraform/terraform.tfstate" ]; then
-  TERRAFORM_API_URL=$(cd "$PROJECT_ROOT/infrastructure/terraform" && terraform output -raw api_gateway_invoke_url 2>/dev/null || echo "")
-  if [ -n "$TERRAFORM_API_URL" ]; then
-    API_URL="${TERRAFORM_API_URL%/}"
+# Configurar variables de entorno para el build - Mejorado
+API_URL="https://api-placeholder.example.com"
+TERRAFORM_OUTPUT_FILE="$PROJECT_ROOT/infrastructure/terraform/terraform.tfstate"
+
+# Intentar obtener API URL de Terraform si existe
+if [ -f "$TERRAFORM_OUTPUT_FILE" ]; then
+  echo -e "${YELLOW}Intentando obtener API URL del estado de Terraform...${NC}"
+  if command -v terraform &> /dev/null; then
+    cd "$PROJECT_ROOT/infrastructure/terraform"
+    if terraform output -json 2>/dev/null | jq -e '.api_gateway_invoke_url.value' > /dev/null; then
+      TERRAFORM_API_URL=$(terraform output -raw api_gateway_invoke_url 2>/dev/null)
+      if [ -n "$TERRAFORM_API_URL" ]; then
+        API_URL=$(echo "$TERRAFORM_API_URL" | sed 's/\/$//')
+        echo -e "${GREEN}API URL obtenida de Terraform: ${API_URL}${NC}"
+      fi
+    fi
+    cd "$PROJECT_ROOT/frontend"
   fi
 fi
 
+# Crear archivos de entorno con la API URL
 cat > .env.production << EOF
 REACT_APP_API_URL=${API_URL}
 NODE_ENV=production
@@ -72,9 +87,18 @@ EOF
 
 echo -e "${YELLOW}Configurando frontend con API URL: ${API_URL}${NC}"
 
-# Instalar dependencias y construir
-npm install --only=production
-npm run build
+# Instalar dependencias y construir con manejo de errores
+echo -e "${YELLOW}Instalando dependencias del frontend...${NC}"
+npm install --only=production || {
+  echo -e "${RED}Error: No se pudieron instalar las dependencias del frontend${NC}"
+  exit 1
+}
+
+echo -e "${YELLOW}Construyendo frontend...${NC}"
+npm run build || {
+  echo -e "${RED}Error: No se pudo construir el frontend${NC}"
+  exit 1
+}
 
 # Verificar que el build se completó
 if [ ! -f "build/index.html" ]; then
@@ -82,33 +106,41 @@ if [ ! -f "build/index.html" ]; then
   exit 1
 fi
 
-cd ..
+cd "$PROJECT_ROOT"
 
-# Construir imágenes Docker
-echo -e "${YELLOW}Construyendo imágenes Docker...${NC}"
+# Construir imágenes Docker con mejor manejo de errores
+echo -e "${GREEN}=== Construyendo imágenes Docker ===${NC}"
 
-# Imagen del servicio de usuarios
-echo -e "${YELLOW}Construyendo imagen del servicio de usuarios...${NC}"
-docker build -t "$DOCKERHUB_USER/appgestion-user-service:latest" ./user-service/
+# Función para construir imágenes con manejo de errores
+build_image() {
+  SERVICE_NAME=$1
+  DIR_NAME=$2
 
-# Imagen del servicio de productos
-echo -e "${YELLOW}Construyendo imagen del servicio de productos...${NC}"
-docker build -t "$DOCKERHUB_USER/appgestion-product-service:latest" ./product-service/
+  echo -e "${YELLOW}Construyendo imagen ${SERVICE_NAME}...${NC}"
+  docker build -t "${DOCKERHUB_USER}/${SERVICE_NAME}:latest" "./${DIR_NAME}/" || {
+    echo -e "${RED}Error: No se pudo construir la imagen ${SERVICE_NAME}${NC}"
+    return 1
+  }
+  echo -e "${GREEN}✅ Imagen ${SERVICE_NAME} construida correctamente${NC}"
+  return 0
+}
 
-# Imagen de nginx
-echo -e "${YELLOW}Construyendo imagen de nginx...${NC}"
-docker build -t "$DOCKERHUB_USER/appgestion-nginx:latest" ./nginx/
-
-# Imagen del frontend (opcional para desarrollo)
-echo -e "${YELLOW}Construyendo imagen del frontend...${NC}"
-docker build -t "$DOCKERHUB_USER/appgestion-frontend:latest" ./frontend/
+# Construir todas las imágenes
+build_image "appgestion-user-service" "user-service" && \
+build_image "appgestion-product-service" "product-service" && \
+build_image "appgestion-nginx" "nginx" && \
+build_image "appgestion-frontend" "frontend" || exit 1
 
 # Publicar imágenes
 echo -e "${YELLOW}Publicando imágenes en DockerHub...${NC}"
-docker push "$DOCKERHUB_USER/appgestion-user-service:latest"
-docker push "$DOCKERHUB_USER/appgestion-product-service:latest"
-docker push "$DOCKERHUB_USER/appgestion-nginx:latest"
-docker push "$DOCKERHUB_USER/appgestion-frontend:latest"
+for image in "appgestion-user-service" "appgestion-product-service" "appgestion-nginx" "appgestion-frontend"; do
+  echo -e "${YELLOW}Publicando ${image}...${NC}"
+  docker push "${DOCKERHUB_USER}/${image}:latest" || {
+    echo -e "${RED}Error: No se pudo publicar la imagen ${image}${NC}"
+    exit 1
+  }
+  echo -e "${GREEN}✅ Imagen ${image} publicada correctamente${NC}"
+done
 
 echo -e "${GREEN}=== Imágenes construidas y publicadas exitosamente ===${NC}"
 echo -e "${YELLOW}Frontend construido y listo para despliegue en S3${NC}"

@@ -9,23 +9,33 @@ services:
     image: {{ docker_creds.username }}/appgestion-user-service:latest
     container_name: user-service
     environment:
-      - POSTGRES_HOST={{ db_creds.host_user }}
-      - POSTGRES_DB={{ db_creds.db_name_user }}
-      - POSTGRES_USER={{ db_creds.username }}
-      - POSTGRES_PASSWORD={{ db_creds.password }}
-      - POSTGRES_PORT={{ db_creds.port }}
-      - DB_MAX_RETRIES=30
-      - DB_RETRY_INTERVAL=5
-      - CORS_ALLOWED_ORIGINS={{ cloudfront_url | default('*') }}
+      # Compatibilidad con ambos conjuntos de variables
+      - POSTGRES_HOST=${USER_DB_HOST}
+      - POSTGRES_DB=${USER_DB_NAME}
+      - POSTGRES_USER=${USER_DB_USER}
+      - POSTGRES_PASSWORD=${USER_DB_PASSWORD}
+      - POSTGRES_PORT=${USER_DB_PORT}
+      # Variables originales del app.py
+      - USER_DB_HOST=${USER_DB_HOST}
+      - USER_DB_NAME=${USER_DB_NAME}
+      - USER_DB_USER=${USER_DB_USER}
+      - USER_DB_PASSWORD=${USER_DB_PASSWORD}
+      - USER_DB_PORT=${USER_DB_PORT}
+      # Configuración adicional
+      - DB_MAX_RETRIES=${DB_MAX_RETRIES:-30}
+      - DB_RETRY_INTERVAL=${DB_RETRY_INTERVAL:-5}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     networks:
       - appgestion-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3001/health || exit 1"]
-      interval: 20s
+      interval: ${HEALTH_CHECK_INTERVAL:-20}s
       timeout: 5s
-      retries: 3
+      retries: 5
       start_period: 20s
     restart: unless-stopped
     logging:
@@ -38,22 +48,32 @@ services:
     image: {{ docker_creds.username }}/appgestion-product-service:latest
     container_name: product-service
     environment:
-      - POSTGRES_HOST={{ db_creds.host_product }}
-      - POSTGRES_DB={{ db_creds.db_name_product }}
-      - POSTGRES_USER={{ db_creds.username }}
-      - POSTGRES_PASSWORD={{ db_creds.password }}
-      - POSTGRES_PORT={{ db_creds.port }}
-      - DB_MAX_RETRIES=30
-      - DB_RETRY_INTERVAL=5
-      - CORS_ALLOWED_ORIGINS={{ cloudfront_url | default('*') }}
+      # Compatibilidad con ambos conjuntos de variables
+      - POSTGRES_HOST=${PRODUCT_DB_HOST}
+      - POSTGRES_DB=${PRODUCT_DB_NAME}
+      - POSTGRES_USER=${PRODUCT_DB_USER}
+      - POSTGRES_PASSWORD=${PRODUCT_DB_PASSWORD}
+      - POSTGRES_PORT=${PRODUCT_DB_PORT}
+      # Variables originales del app.py
+      - PRODUCT_DB_HOST=${PRODUCT_DB_HOST}
+      - PRODUCT_DB_NAME=${PRODUCT_DB_NAME}
+      - PRODUCT_DB_USER=${PRODUCT_DB_USER}
+      - PRODUCT_DB_PASSWORD=${PRODUCT_DB_PASSWORD}
+      - PRODUCT_DB_PORT=${PRODUCT_DB_PORT}
+      # Configuración adicional
+      - DB_MAX_RETRIES=${DB_MAX_RETRIES:-30}
+      - DB_RETRY_INTERVAL=${DB_RETRY_INTERVAL:-5}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-*}
+      - CORS_ORIGIN=${CORS_ORIGIN:-*}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     ports:
-      - "3002:3002"
+      - "127.0.0.1:3002:3002"
     networks:
       - appgestion-network
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3002/health || exit 1"]
-      interval: 20s
-      timeout: 5s
+      interval: ${HEALTH_CHECK_INTERVAL:-30}s
+      timeout: 10s
       retries: 3
       start_period: 20s
     restart: unless-stopped
@@ -62,25 +82,23 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
-  nginx-proxy:
+        
+  nginx:
     image: {{ docker_creds.username }}/appgestion-nginx:latest
-    container_name: nginx-proxy
+    container_name: nginx
     ports:
       - "80:80"
       - "443:443"
     environment:
-      - FRONTEND_URL={{ cloudfront_url | default('localhost') }}
-      - API_GATEWAY_URL={{ api_gateway_url | default('') }}
+      - CORS_ORIGIN=${CORS_ALLOWED_ORIGINS:-*}
+      - STRICT_HEALTH_CHECK=${STRICT_HEALTH_CHECK:-false}
     depends_on:
-      user-service:
-        condition: service_healthy
-      product-service:
-        condition: service_healthy
+      - user-service
+      - product-service
     healthcheck:
-      test: ["CMD", "nginx", "-t"]
-      interval: 30s
-      timeout: 5s
+      test: ["CMD", "/usr/local/bin/health-check.sh"]
+      interval: ${HEALTH_CHECK_INTERVAL:-30}s
+      timeout: 10s
       retries: 3
       start_period: 10s
     networks:

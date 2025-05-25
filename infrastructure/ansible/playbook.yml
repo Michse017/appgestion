@@ -28,7 +28,7 @@
         state: started
         enabled: yes
 
-        - name: Add ubuntu user to docker group
+    - name: Add ubuntu user to docker group
       user:
         name: ubuntu
         groups: docker
@@ -84,6 +84,14 @@
         password: "{{ docker_creds.password }}"
       become_user: ubuntu
 
+    - name: Create application directory
+      file:
+        path: /opt/appgestion
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
     - name: Create docker-compose file
       template:
         src: roles/appgestion/templates/docker-compose.yml.j2
@@ -124,18 +132,68 @@
         host: localhost
         delay: 10
         timeout: 300
+        sleep: 5
       loop:
         - 3001
         - 3002
         - 80
+      register: ports_check
+      failed_when: false
+      retries: 10
+      delay: 15
 
-    - name: Verify services are running
+    - name: Verify user service is running
       uri:
-        url: "http://localhost:{{ item }}/health"
+        url: "http://localhost:3001/health"
         method: GET
         status_code: 200
-      loop:
-        - 3001
-        - 3002
-      retries: 5
-      delay: 10
+        return_content: yes
+        timeout: 10
+      retries: 10
+      delay: 15
+      register: user_health
+      ignore_errors: true
+      until: user_health.status is defined and user_health.status == 200
+
+    - name: Verify product service is running
+      uri:
+        url: "http://localhost:3002/health"
+        method: GET
+        status_code: 200
+        return_content: yes
+        timeout: 10
+      retries: 10
+      delay: 15
+      register: product_health
+      ignore_errors: true
+      until: product_health.status is defined and product_health.status == 200
+
+    - name: Verify nginx service is running
+      uri:
+        url: "http://localhost:80/health"
+        method: GET
+        status_code: 200
+        return_content: yes
+      retries: 10
+      delay: 15
+      register: nginx_health
+      ignore_errors: true
+
+    - name: Debug service responses
+      debug:
+        msg: |
+          User service response: {{ user_health.content | default('No response') }}
+          Product service response: {{ product_health.content | default('No response') }}
+          Nginx service response: {{ nginx_health.content | default('No response') }}
+      when: user_health.status is defined or product_health.status is defined or nginx_health.status is defined
+
+    - name: Report services status
+      debug:
+        msg: |
+          User service status: {{ 'UP' if user_health.status is defined and user_health.status == 200 else 'DOWN - May require attention' }}
+          Product service status: {{ 'UP' if product_health.status is defined and product_health.status == 200 else 'DOWN - May require attention' }}
+          Nginx service status: {{ 'UP' if nginx_health.status is defined and nginx_health.status == 200 else 'DOWN - May require attention' }}
+      failed_when: >
+        (user_health.status is not defined or user_health.status != 200) or 
+        (product_health.status is not defined or product_health.status != 200) or
+        (nginx_health.status is not defined or nginx_health.status != 200)

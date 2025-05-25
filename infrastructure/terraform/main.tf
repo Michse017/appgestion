@@ -579,7 +579,7 @@ resource "aws_cloudfront_distribution" "frontend" {
   default_root_object = "index.html"
   price_class         = "PriceClass_100"  # Usar solo las ubicaciones más económicas
   
-  # Configuración de caché
+  # Configuración de caché para mejorar rendimiento sin impacto en costos
   default_cache_behavior {
     allowed_methods  = ["GET", "HEAD", "OPTIONS"]
     cached_methods   = ["GET", "HEAD"]
@@ -709,6 +709,10 @@ resource "aws_api_gateway_method_response" "users_proxy_response" {
     "method.response.header.Access-Control-Allow-Headers"     = true,
     "method.response.header.Access-Control-Allow-Credentials" = true
   }
+  
+  depends_on = [
+    aws_api_gateway_method.users_proxy
+  ]
 }
 
 # Respuesta de integración para configurar valores de encabezados CORS
@@ -718,15 +722,17 @@ resource "aws_api_gateway_integration_response" "users_proxy_integration_respons
   http_method = aws_api_gateway_method.users_proxy.http_method
   status_code = aws_api_gateway_method_response.users_proxy_response.status_code
 
+  # Configuración CORS estandarizada
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin" = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
-    "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
-    "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With,Origin,Accept'",
+    "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS,PATCH'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
   }
   
   depends_on = [
-    aws_api_gateway_integration.users_proxy
+    aws_api_gateway_integration.users_proxy,
+    aws_api_gateway_method_response.users_proxy_response
   ]
 }
 
@@ -773,11 +779,10 @@ resource "aws_api_gateway_integration_response" "users_options_integration_respo
   http_method = aws_api_gateway_method.users_options.http_method
   status_code = aws_api_gateway_method_response.users_options_200.status_code
   
-  # Corregido: Aplicar condición de entorno consistente para CORS
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
-    "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
-    "method.response.header.Access-Control-Allow-Origin"      = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With,Origin,Accept'",
+    "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS,PATCH'",
+    "method.response.header.Access-Control-Allow-Origin" = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
   }
 }
@@ -834,16 +839,17 @@ resource "aws_api_gateway_integration_response" "products_proxy_integration_resp
   http_method = aws_api_gateway_method.products_proxy.http_method
   status_code = aws_api_gateway_method_response.products_proxy_response.status_code
   
-  # Corregido: Usar CloudFront como origen permitido en lugar de '*'
+  # Configuración CORS estandarizada - igual que users_proxy_integration_response
   response_parameters = {
     "method.response.header.Access-Control-Allow-Origin" = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
-    "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
-    "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With,Origin,Accept'",
+    "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS,PATCH'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
   }
   
   depends_on = [
-    aws_api_gateway_integration.products_proxy
+    aws_api_gateway_integration.products_proxy,
+    aws_api_gateway_method_response.products_proxy_response
   ]
 }
 
@@ -890,11 +896,10 @@ resource "aws_api_gateway_integration_response" "products_options_integration_re
   http_method = aws_api_gateway_method.products_options.http_method
   status_code = aws_api_gateway_method_response.products_options_200.status_code
   
-  # Corregido: Aplicar condición de entorno consistente para CORS
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers"     = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With'",
-    "method.response.header.Access-Control-Allow-Methods"     = "'GET,POST,PUT,DELETE,OPTIONS'",
-    "method.response.header.Access-Control-Allow-Origin"      = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With,Origin,Accept'",
+    "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS,PATCH'",
+    "method.response.header.Access-Control-Allow-Origin" = var.environment == "production" ? "'https://${aws_cloudfront_distribution.frontend.domain_name}'" : "'*'",
     "method.response.header.Access-Control-Allow-Credentials" = "'true'"
   }
 }
@@ -918,19 +923,6 @@ resource "aws_api_gateway_deployment" "main" {
   
   lifecycle {
     create_before_destroy = true
-  }
-}
-
-# Optimizar configuración de API Gateway según entorno
-resource "aws_api_gateway_method_settings" "all" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  stage_name  = aws_api_gateway_deployment.main.stage_name
-  method_path = "*/*"
-
-  settings {
-    # Solo habilitar métricas en producción
-    metrics_enabled = var.environment == "production"
-    logging_level   = var.environment == "production" ? "INFO" : "OFF"
   }
 }
 
@@ -966,4 +958,9 @@ resource "local_file" "ansible_vars" {
 resource "local_file" "ssh_key_path_output" {
   content  = var.ssh_key_path
   filename = "${path.module}/ssh_key_path.txt"
+}
+
+output "ssh_key_path" {
+  description = "Ruta al archivo de clave SSH"
+  value       = var.ssh_key_path
 }

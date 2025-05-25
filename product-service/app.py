@@ -8,11 +8,23 @@ import sqlalchemy.exc
 
 app = Flask(__name__)
 
-# Configuración de logging
-logging.basicConfig(
-    level=os.environ.get('LOG_LEVEL', 'INFO'),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configuración de timeout para operaciones largas
+service_timeout = int(os.environ.get("SERVICE_TIMEOUT", "60"))
+
+# Configuración de profiling para desarrollo
+enable_profiling = os.environ.get("ENABLE_PROFILING", "false").lower() == "true"
+
+# Ajustar configuración de logging según entorno
+if os.environ.get("ENVIRONMENT") == "production":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - [%(process)d] - %(message)s'
+    )
+else:
+    logging.basicConfig(
+        level=logging.DEBUG if os.environ.get("LOG_LEVEL", "").upper() == "DEBUG" else logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 logger = logging.getLogger(__name__)
 
 # Configuración de CORS
