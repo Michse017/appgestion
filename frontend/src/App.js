@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import './App.css';
+import './app.css';
 import { USER_SERVICE_URL, PRODUCT_SERVICE_URL } from './config';
 
 function App() {
