@@ -1,7 +1,4 @@
-# ======================================================
 # VARIABLES BÁSICAS
-# ======================================================
-
 variable "aws_region" {
   description = "Región de AWS donde se desplegará la infraestructura"
   type        = string
@@ -20,10 +17,7 @@ variable "environment" {
   default     = "prod"
 }
 
-# ======================================================
 # NETWORKING
-# ======================================================
-
 variable "vpc_cidr" {
   description = "CIDR block para la VPC"
   type        = string
@@ -43,15 +37,12 @@ variable "private_subnet_cidrs" {
 }
 
 variable "availability_zones" {
-  description = "Zonas de disponibilidad para las subnets"
+  description = "Zonas de disponibilidad para los subnets"
   type        = list(string)
   default     = ["us-east-1a", "us-east-1b"]
 }
 
-# ======================================================
-# INSTANCIAS EC2
-# ======================================================
-
+# INSTANCIA Y BD
 variable "instance_type" {
   description = "Tipo de instancia EC2"
   type        = string
@@ -59,24 +50,10 @@ variable "instance_type" {
 }
 
 variable "ec2_ami" {
-  description = "AMI para las instancias EC2"
+  description = "AMI a usar para instancias EC2"
   type        = string
-  default     = "ami-0c02fb55956c7d316" # Ubuntu 22.04 LTS
+  default     = "ami-0c55b159cbfafe1f0" # Ubuntu 20.04 LTS
 }
-
-variable "ssh_key_name" {
-  description = "Nombre del key pair para acceso SSH"
-  type        = string
-}
-
-variable "ssh_key_path" {
-  description = "Ruta completa al archivo de clave SSH privada"
-  type        = string
-}
-
-# ======================================================
-# BASES DE DATOS
-# ======================================================
 
 variable "db_instance_class" {
   description = "Clase de instancia para RDS"
@@ -84,56 +61,60 @@ variable "db_instance_class" {
   default     = "db.t3.micro"
 }
 
-variable "db_username" {
-  description = "Usuario administrador de la base de datos"
+# ACCESO Y SEGURIDAD
+variable "ssh_key_path" {
+  description = "Ruta al archivo de la clave SSH privada"
   type        = string
-  default     = "dbadmin"
+}
+
+variable "ssh_key_name" {
+  description = "Nombre de la clave SSH en AWS"
+  type        = string
+}
+
+variable "allowed_ssh_ip" {
+  description = "IP permitida para acceso SSH"
+  type        = string
+  default     = "0.0.0.0/0"
+}
+
+# CREDENCIALES
+variable "db_username" {
+  description = "Nombre de usuario para PostgreSQL"
+  type        = string
 }
 
 variable "db_password" {
-  description = "Contraseña del usuario administrador"
+  description = "Contraseña para PostgreSQL"
   type        = string
   sensitive   = true
 }
 
 variable "db_name_user" {
-  description = "Nombre de la base de datos para servicio de usuarios"
+  description = "Nombre de la base de datos para el servicio de usuarios"
   type        = string
   default     = "user_db"
 }
 
 variable "db_name_product" {
-  description = "Nombre de la base de datos para servicio de productos"
+  description = "Nombre de la base de datos para el servicio de productos"
   type        = string
   default     = "product_db"
 }
 
-# ======================================================
-# FRONTEND Y CDN
-# ======================================================
-
+# DOCKER Y FRONTEND
 variable "domain_name" {
-  description = "Nombre de dominio principal para la aplicación"
+  description = "Nombre de dominio principal"
   type        = string
 }
-
-variable "frontend_bucket_name" {
-  description = "Nombre del bucket S3 para el frontend"
-  type        = string
-  default     = null
-}
-
-# ======================================================
-# DOCKER Y DESPLIEGUE
-# ======================================================
 
 variable "dockerhub_username" {
-  description = "Usuario de DockerHub para obtener imágenes"
+  description = "Usuario de DockerHub"
   type        = string
 }
 
 variable "dockerhub_password" {
-  description = "Contraseña de DockerHub"
+  description = "Contraseña/token de DockerHub"
   type        = string
   sensitive   = true
 }

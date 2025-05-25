@@ -1,17 +1,30 @@
 FROM python:3.9-slim
 
-# Instalar dependencias del sistema para psycopg2
-RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
+# Instalación de dependencias
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+# Copiado del código
+COPY app.py .
+
+# Variables de entorno predeterminadas
+ENV POSTGRES_USER=dbadmin \
+    POSTGRES_PASSWORD=placeholder_password \
+    POSTGRES_HOST=localhost \
+    POSTGRES_PORT=5432 \
+    POSTGRES_DB=product_db \
+    DB_MAX_RETRIES=30 \
+    DB_RETRY_INTERVAL=5 \
+    CORS_ALLOWED_ORIGINS="*" \
+    ENVIRONMENT=production \
+    # Variables para API Gateway y comunicación entre servicios
+    SERVICE_URL="http://localhost:3002" \
+    API_GATEWAY_URL="http://localhost:8080" \
+    # Versión del despliegue para seguimiento
+    DEPLOYMENT_VERSION="1.0.0"
+
+EXPOSE 3002
 
 CMD ["python", "app.py"]

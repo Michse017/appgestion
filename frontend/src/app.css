@@ -64,3 +64,30 @@ li {
   background: #f8f9fa;
   border-radius: 4px;
 }
+
+@media (max-width: 768px) {
+  .lists-container {
+    grid-template-columns: 1fr;
+  }
+  
+  .form-container {
+    padding: 15px;
+  }
+  
+  h1 {
+    font-size: 24px;
+  }
+}
+
+/* Centrar mejor la app */
+.App {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+/* Mejorar la apariencia de los formularios */
+form button {
+  margin-top: 10px;
+  transition: background-color 0.3s;
+}
