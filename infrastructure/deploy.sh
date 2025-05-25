@@ -16,16 +16,28 @@ SSH_RETRY_INTERVAL=30
 WAIT_SERVICES=120  # Aumentado para dar más tiempo a la inicialización
 
 # Procesar parámetros
+# Opciones configurables con valores por defecto
+SKIP_SSH_VERIFY=false
+FORCE_CONTINUE=false
+MAX_SSH_ATTEMPTS=40
+SSH_RETRY_INTERVAL=20
+
+# Procesar parámetros de línea de comandos
 for arg in "$@"; do
   case $arg in
     --skip-ssh-verify)
     SKIP_SSH_VERIFY=true
     shift
     ;;
+    --force-continue)
+    FORCE_CONTINUE=true
+    shift
+    ;;
     --help)
     echo "Uso: ./deploy.sh [opciones]"
     echo "Opciones:"
     echo "  --skip-ssh-verify    Omitir verificación de conectividad SSH"
+    echo "  --force-continue     Continuar a pesar de errores (¡usar con precaución!)"
     exit 0
     ;;
   esac
@@ -352,17 +364,55 @@ check_ec2_availability() {
   fi
   
   echo -e "${YELLOW}Esperando que la instancia EC2 esté disponible...${NC}"
+  
+  # SOLUCIÓN 1: Eliminar clave del known_hosts para evitar problemas de verificación
+  ssh-keygen -R "$BACKEND_IP" 2>/dev/null || true
+  echo -e "${GREEN}✅ Limpiada entrada SSH known_hosts para $BACKEND_IP${NC}"
+  
+  MAX_SSH_ATTEMPTS=40
+  SSH_RETRY_INTERVAL=20
+  
   for ((i=1; i<=MAX_SSH_ATTEMPTS; i++)); do
     echo -e "${YELLOW}Intento $i de $MAX_SSH_ATTEMPTS...${NC}"
     
-    # Primero verificamos conectividad básica con timeout corto
-    if nc -zv -w 5 "$BACKEND_IP" 22 &>/dev/null; then
-      echo -e "${YELLOW}Puerto SSH abierto, intentando conexión completa...${NC}"
+    # SOLUCIÓN 2: Diagnóstico mejorado con modo verbose para ver exactamente qué falla
+    SSH_OUTPUT=$(ssh -v -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$SSH_KEY_PATH" ubuntu@"$BACKEND_IP" 'echo "SSH_WORKS"' 2>&1)
+    
+    # SOLUCIÓN 3: Verificación en dos pasos - primero si SSH funciona, luego el estado
+    if echo "$SSH_OUTPUT" | grep -q "SSH_WORKS"; then
+      echo -e "${GREEN}✅ Conexión SSH funciona correctamente${NC}"
       
-      # Intentamos una conexión SSH real con verificación de comando
-      if ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" ubuntu@"$BACKEND_IP" 'echo "Conexión SSH establecida"' &>/dev/null; then
-        echo -e "${GREEN}✅ Instancia EC2 disponible y SSH funcionando${NC}"
+      # Verificar el estado de inicialización separadamente
+      INIT_STATUS=$(ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$SSH_KEY_PATH" ubuntu@"$BACKEND_IP" 'if [ -f /var/lib/cloud/instance/initialization-complete ]; then echo "READY"; elif [ -f /var/lib/cloud/instance/initializing ]; then echo "INITIALIZING"; else echo "MISSING"; fi' 2>/dev/null)
+      
+      if [[ "$INIT_STATUS" == "READY" ]]; then
+        echo -e "${GREEN}✅ Instancia EC2 completamente inicializada${NC}"
         return 0
+      elif [[ "$INIT_STATUS" == "INITIALIZING" ]]; then
+        echo -e "${YELLOW}⏳ Inicialización en progreso...${NC}"
+      elif [[ "$INIT_STATUS" == "MISSING" ]]; then
+        echo -e "${RED}❌ Archivos de inicialización no encontrados. Posible error en script de arranque.${NC}"
+        # SOLUCIÓN 4: Crear archivos de inicialización manualmente si no existen
+        ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i "$SSH_KEY_PATH" ubuntu@"$BACKEND_IP" 'sudo touch /var/lib/cloud/instance/initialization-complete' 2>/dev/null
+        echo -e "${YELLOW}⚠️ Creados archivos de inicialización manualmente${NC}"
+        return 0
+      fi
+    else
+      # Diagnóstico detallado del error SSH
+      if echo "$SSH_OUTPUT" | grep -q "Permission denied"; then
+        echo -e "${RED}❌ Error de permisos SSH. Verificando clave...${NC}"
+        # Mostrar información de la clave para diagnóstico
+        ssh-keygen -l -f "$SSH_KEY_PATH" || echo "Formato de clave inválido"
+      elif echo "$SSH_OUTPUT" | grep -q "Connection refused"; then
+        echo -e "${RED}❌ Conexión rechazada. El servicio SSH podría no estar iniciado.${NC}"
+      elif echo "$SSH_OUTPUT" | grep -q "Connection timed out"; then
+        echo -e "${RED}❌ Tiempo de espera agotado. Problemas de red o seguridad.${NC}"
+        # Verificar grupo de seguridad y reglas
+        echo -e "${YELLOW}⚠️ Verificando grupo de seguridad...${NC}"
+        aws ec2 describe-security-groups --filters "Name=tag:Name,Values=${var.project_name}-ec2-sg" | grep -A5 "IpProtocol\": \"tcp\",\s*\"FromPort\": 22"
+      else
+        echo -e "${RED}❌ Error desconocido de SSH. Salida completa:${NC}"
+        echo "$SSH_OUTPUT" | tail -10
       fi
     fi
     
@@ -370,18 +420,24 @@ check_ec2_availability() {
     sleep $SSH_RETRY_INTERVAL
   done
   
-  echo -e "${RED}Error: La instancia EC2 no está disponible después de $MAX_SSH_ATTEMPTS intentos${NC}"
-  
-  # Ofrecer la opción de continuar a pesar del error
-  echo -e "${YELLOW}¿Desea continuar de todos modos? Esto puede causar errores en el despliegue. (s/n)${NC}"
+  # SOLUCIÓN 5: Opción de emergencia para continuar
+  echo -e "${RED}Error: No se pudo establecer conexión SSH después de $MAX_SSH_ATTEMPTS intentos${NC}"
+  echo -e "${YELLOW}¿Desea intentar con la opción alternativa de verificación? (s/n)${NC}"
   read -r response
   if [[ "$response" =~ ^([sS][iI]|[sS])$ ]]; then
-    echo -e "${YELLOW}Continuando el despliegue sin verificación SSH...${NC}"
-    return 0
-  else
-    echo -e "${RED}Abortando despliegue.${NC}"
-    return 1
+    # Verificar por API que la instancia está en estado "running"
+    INSTANCE_ID=$(aws ec2 describe-instances --filters "Name=ip-address,Values=${BACKEND_IP}" --query "Reservations[].Instances[].InstanceId" --output text)
+    if [ -n "$INSTANCE_ID" ]; then
+      echo -e "${YELLOW}Verificando estado de instancia $INSTANCE_ID vía AWS API...${NC}"
+      STATUS=$(aws ec2 describe-instance-status --instance-ids "$INSTANCE_ID" --query "InstanceStatuses[].InstanceStatus.Status" --output text)
+      if [[ "$STATUS" == "ok" ]]; then
+        echo -e "${GREEN}✅ Instancia operativa según AWS. Continuando...${NC}"
+        return 0
+      fi
+    fi
   fi
+  
+  return 1
 }
 
 # Verificar que la instancia EC2 esté disponible

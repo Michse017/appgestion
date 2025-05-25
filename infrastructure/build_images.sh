@@ -89,7 +89,7 @@ echo -e "${YELLOW}Configurando frontend con API URL: ${API_URL}${NC}"
 
 # Instalar dependencias y construir con manejo de errores
 echo -e "${YELLOW}Instalando dependencias del frontend...${NC}"
-npm install --only=production || {
+npm install || {
   echo -e "${RED}Error: No se pudieron instalar las dependencias del frontend${NC}"
   exit 1
 }

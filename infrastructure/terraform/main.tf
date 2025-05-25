@@ -459,20 +459,80 @@ resource "aws_instance" "backend" {
   
   # Script de arranque mejorado
   user_data = <<-EOF
-              #!/bin/bash
-              apt-get update
-              apt-get install -y python3-pip python3-boto3 docker.io docker-compose awscli
-              systemctl enable docker
-              systemctl start docker
-              usermod -aG docker ubuntu
-              
-              # Crear directorio para aplicación
-              mkdir -p /home/ubuntu/appgestion
-              chown -R ubuntu:ubuntu /home/ubuntu/appgestion
-              
-              # Instalar dependencias para monitoreo
-              apt-get install -y jq htop net-tools
-              EOF
+            #!/bin/bash
+            
+            # Mejorar la redirección de logs para debugging más completo
+            exec > >(tee -a /var/log/user-data.log) 2>&1
+            echo "=== Iniciando script de configuración: $(date) ==="
+            
+            # Crear directorios para los archivos de control si no existen
+            mkdir -p /var/lib/cloud/instance
+            touch /var/lib/cloud/instance/initializing
+            
+            # Configurar SSH para ser más accesible durante bootstrap
+            echo "=== Configurando SSH para mayor accesibilidad ==="
+            sed -i 's/^#\?PermitRootLogin .*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+            echo "ClientAliveInterval 30" >> /etc/ssh/sshd_config
+            echo "ClientAliveCountMax 240" >> /etc/ssh/sshd_config
+            echo "MaxStartups 100:30:200" >> /etc/ssh/sshd_config
+            systemctl restart ssh || service ssh restart
+
+            # Establecer nombre de host apropiado
+            hostnamectl set-hostname appgestion-backend || hostname appgestion-backend
+            
+            # Actualizar APT con manejo de errores robusto
+            echo "=== Actualizando paquetes del sistema ==="
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update || echo "Error en apt-get update, continuando..."
+            apt-get install -y --no-install-recommends ca-certificates curl gnupg lsb-release || echo "Error instalando dependencias básicas"
+            
+            # Instalar dependencias esenciales con reintentos
+            echo "=== Instalando dependencias esenciales ==="
+            for i in {1..3}; do
+              apt-get install -y python3-pip python3-boto3 jq htop net-tools awscli && break
+              echo "Intento $i: Fallo al instalar dependencias, reintentando..."
+              sleep 10
+            done
+            
+            # Instalar Docker con método más confiable y manejo de errores
+            echo "=== Instalando Docker ==="
+            for i in {1..3}; do
+              if curl -fsSL https://get.docker.com -o get-docker.sh; then
+                sh get-docker.sh && break
+              elif [ $i -eq 3 ]; then
+                # Método alternativo si el script falla
+                apt-get install -y docker.io
+              else
+                echo "Intento $i: Fallo al descargar script de Docker, reintentando..."
+                sleep 10
+              fi
+            done
+            
+            # Iniciar y habilitar Docker con verificación
+            systemctl enable docker || true
+            systemctl start docker || service docker start
+            docker --version || echo "ERROR: Docker no instalado correctamente"
+            
+            # Añadir usuario ubuntu al grupo docker
+            usermod -aG docker ubuntu || echo "Error al añadir usuario a grupo docker"
+            
+            # Crear directorio para aplicación
+            mkdir -p /home/ubuntu/appgestion
+            chown -R ubuntu:ubuntu /home/ubuntu/appgestion
+            
+            # Verificar que todo esté funcionando antes de marcar como completo
+            if docker --version > /dev/null && systemctl is-active ssh > /dev/null; then
+              echo "=== Verificación exitosa: Docker y SSH funcionando ==="
+              # Señalizar finalización exitosa
+              rm -f /var/lib/cloud/instance/initializing
+              touch /var/lib/cloud/instance/initialization-complete
+              echo "=== Configuración de instancia COMPLETADA: $(date) ==="
+            else
+              echo "=== ERROR: No se completó la inicialización correctamente ==="
+              echo "Estado de Docker: $(systemctl status docker)"
+              echo "Estado de SSH: $(systemctl status ssh)"
+            fi
+            EOF
   
   tags = {
     Name        = "${var.project_name}-backend"
