@@ -2,13 +2,21 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Instalación de dependencias
+# Instalación de dependencias del sistema
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalación de dependencias Python
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir gunicorn
 
 # Copiado del código
 COPY app.py .
+COPY wait-for-postgres.sh .
+RUN chmod +x wait-for-postgres.sh
 
 # Variables de entorno
 ENV POSTGRES_USER=dbadmin \
@@ -16,12 +24,25 @@ ENV POSTGRES_USER=dbadmin \
     POSTGRES_HOST=localhost \
     POSTGRES_PORT=5432 \
     POSTGRES_DB=user_db \
-    DB_MAX_RETRIES=30 \
+    DB_MAX_RETRIES=60 \
     DB_RETRY_INTERVAL=5 \
     CORS_ALLOWED_ORIGINS="*" \
-    PORT=3001
+    PORT=3001 \
+    PYTHONUNBUFFERED=1
 
 EXPOSE 3001
 
+# Crear script para esperar a postgres y luego iniciar el servidor
+RUN echo '#!/bin/sh \n\
+echo "Verificando conexión a PostgreSQL $POSTGRES_HOST:$POSTGRES_PORT..." \n\
+export PGPASSWORD=$POSTGRES_PASSWORD \n\
+until psql -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT 1" > /dev/null 2>&1; do \n\
+  echo "PostgreSQL $POSTGRES_HOST:$POSTGRES_PORT no disponible aún - esperando..." \n\
+  sleep 2 \n\
+done \n\
+echo "PostgreSQL está disponible en $POSTGRES_HOST:$POSTGRES_PORT - iniciando aplicación" \n\
+exec gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --log-level debug app:app \n\
+' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+
 # Ejecutar con gunicorn para producción
-CMD gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 app:app
+CMD ["/app/entrypoint.sh"]

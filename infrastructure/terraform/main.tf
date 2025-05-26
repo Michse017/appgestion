@@ -326,7 +326,7 @@ resource "aws_iam_role" "ec2_role" {
 
 resource "aws_iam_policy" "secrets_access" {
   name        = "${var.project_name}-secrets-access"
-  description = "Permite acceso a secretos especificos"
+  description = "Permite acceso a secretos específicos"
   
   policy = jsonencode({
     Version = "2012-10-17",
@@ -334,11 +334,14 @@ resource "aws_iam_policy" "secrets_access" {
       {
         Action = [
           "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret",
+          "secretsmanager:ListSecrets"
         ],
         Effect = "Allow",
         Resource = [
           aws_secretsmanager_secret.db_credentials.arn,
-          aws_secretsmanager_secret.docker_credentials.arn
+          aws_secretsmanager_secret.docker_credentials.arn,
+          "arn:aws:secretsmanager:${var.aws_region}:*:secret:${var.project_name}-*"
         ]
       }
     ]
@@ -436,9 +439,14 @@ resource "aws_launch_template" "user_service" {
   
   user_data = base64encode(<<-EOF
     #!/bin/bash
-    # Actualizar sistema y instalar dependencias
+    # Configurar logging detallado para diagnóstico
+    exec > >(tee /var/log/user-data-userservice.log|logger -t user-data -s 2>/dev/console) 2>&1
+    
+    echo "=== INICIO CONFIGURACIÓN USER SERVICE $(date) ==="
+    
+    # Actualizar sistema e instalar dependencias
     apt-get update && apt-get upgrade -y
-    apt-get install -y docker.io docker-compose awscli python3-pip curl jq
+    apt-get install -y docker.io docker-compose awscli python3-pip curl jq postgresql-client
     
     # Configurar Docker
     systemctl enable docker
@@ -451,76 +459,147 @@ resource "aws_launch_template" "user_service" {
     echo "region = ${var.aws_region}" >> /home/ubuntu/.aws/config
     chown -R ubuntu:ubuntu /home/ubuntu/.aws
 
-    # Crear directorio para la aplicacion
+    # Crear directorio de aplicación
     mkdir -p /home/ubuntu/appgestion
     chown -R ubuntu:ubuntu /home/ubuntu/appgestion
     
-    # Para evitar problemas de Docker ContainerConfig
-    echo '{"experimental": true}' > /etc/docker/daemon.json
-    systemctl restart docker
+    # Obtener secretos de AWS
+    echo "Obteniendo secretos de base de datos..."
+    SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_credentials.name} --region ${var.aws_region} --query SecretString --output text)
     
-    # Obtener secretos y configurar el servicio
-    SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_credentials.name} --region ${var.aws_region} --query SecretString --output text)
-    DB_HOST=$(echo $SECRET_VALUE | jq -r '.host_user')
-    DB_NAME=$(echo $SECRET_VALUE | jq -r '.db_name_user')
-    DB_USER=$(echo $SECRET_VALUE | jq -r '.username')
-    DB_PASS=$(echo $SECRET_VALUE | jq -r '.password')
+    # Extraer valores con validación y mensaje detallado
+    DB_HOST=$(echo $SECRET_JSON | jq -r '.host_user // empty')
+    if [ -z "$DB_HOST" ]; then
+      echo "ERROR: No se pudo extraer host_user del secreto"
+      echo "SECRET_JSON: $SECRET_JSON"
+      # Usar valor de respaldo
+      DB_HOST="${aws_db_instance.user_db.address}"
+      echo "Usando valor de respaldo: $DB_HOST"
+    fi
     
-    # Obtener credenciales de Docker Hub
-    DOCKER_SECRET=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.docker_credentials.name} --region ${var.aws_region} --query SecretString --output text)
-    DOCKER_USER=$(echo $DOCKER_SECRET | jq -r '.username')
-    DOCKER_PASS=$(echo $DOCKER_SECRET | jq -r '.password')
+    DB_NAME=$(echo $SECRET_JSON | jq -r '.db_name_user // empty')
+    if [ -z "$DB_NAME" ]; then
+      echo "ERROR: No se pudo extraer db_name_user del secreto"
+      DB_NAME="${var.db_name_user}"
+      echo "Usando valor de respaldo: $DB_NAME"
+    fi
     
-    # Login en Docker Hub
-    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+    DB_USER=$(echo $SECRET_JSON | jq -r '.username // empty')
+    if [ -z "$DB_USER" ]; then
+      echo "ERROR: No se pudo extraer username del secreto"
+      DB_USER="${var.db_username}"
+      echo "Usando valor de respaldo: $DB_USER"
+    fi
     
-    # Iniciar log de diagnóstico
-    echo "==== CONFIGURACIÓN USER SERVICE $(date) ====" > /var/log/appgestion-startup.log
-    echo "DB_HOST: $DB_HOST" >> /var/log/appgestion-startup.log
-    echo "DB_NAME: $DB_NAME" >> /var/log/appgestion-startup.log
-    echo "DB_USER: $DB_USER" >> /var/log/appgestion-startup.log
-    echo "Creando docker-compose.yml..." >> /var/log/appgestion-startup.log
+    DB_PASS=$(echo $SECRET_JSON | jq -r '.password // empty')
+    if [ -z "$DB_PASS" ]; then
+      echo "ERROR: No se pudo extraer password del secreto"
+      DB_PASS="${var.db_password}"
+      echo "Usando valor de respaldo: (contraseña oculta)"
+    fi
+    
+    # Probar conexión directa a PostgreSQL
+    echo "Verificando conexión directa a la base de datos..."
+    export PGPASSWORD="$DB_PASS"
 
-    # Crear docker-compose.yml con comando para esperar a la base de datos
+    for i in {1..20}; do
+      echo "Intento $i: Conectando a PostgreSQL en $DB_HOST:5432..."
+      if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT version();" > /dev/null 2>&1; then
+        echo "✅ Conexión PostgreSQL establecida exitosamente"
+        
+        # Crear tabla de users si no existe (verificación extra)
+        echo "Verificando/creando tabla user..."
+        psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "
+        CREATE TABLE IF NOT EXISTS \"user\" (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          email VARCHAR(120) UNIQUE NOT NULL,
+          password_hash VARCHAR(256) NOT NULL,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );"
+        
+        # Insertar usuario de prueba para verificar
+        echo "Insertando usuario de prueba desde script de inicialización..."
+        psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "
+        INSERT INTO \"user\" (name, email, password_hash)
+        VALUES ('Usuario Inicial', 'admin@example.com', 'pbkdf2:sha256:260000$gEfDtuSXtRwn1oUR$0de673f1bcc549ce4bbe3d3501169922c451da883c0e748e2f9f6202a76813a1')
+        ON CONFLICT (email) DO NOTHING;"
+        
+        # Verificar que se insertó el usuario
+        echo "Usuarios actuales en la base de datos:"
+        psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT id, name, email FROM \"user\";"
+        break
+      else
+        echo "Fallo en intento $i. Reintentando en 5 segundos..."
+        sleep 5
+      fi
+      
+      if [ $i -eq 20 ]; then
+        echo "❌ No se pudo conectar a PostgreSQL después de 20 intentos"
+      fi
+    done
+    
+    # Obtener credenciales Docker Hub
+    echo "Obteniendo credenciales Docker Hub..."
+    DOCKER_SECRET=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.docker_credentials.name} --region ${var.aws_region} --query SecretString --output text)
+    DOCKER_USER=$(echo $DOCKER_SECRET | jq -r '.username // empty')
+    DOCKER_PASS=$(echo $DOCKER_SECRET | jq -r '.password // empty')
+    
+    if [ -n "$DOCKER_USER" ] && [ -n "$DOCKER_PASS" ]; then
+      echo "Iniciando sesión en Docker Hub..."
+      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+    else
+      echo "❌ ERROR: No se pudieron obtener credenciales válidas de Docker Hub"
+      echo "DOCKER_SECRET: $DOCKER_SECRET"
+    fi
+    
+    # Crear docker-compose.yml
+    echo "Creando docker-compose.yml..."
     cat > /home/ubuntu/appgestion/docker-compose.yml << EOFDC
-    version: '3.8'
-    services:
-      user-service:
-        image: ${var.dockerhub_username}/appgestion-user-service:latest
-        container_name: user-service
-        environment:
-          - POSTGRES_HOST=$DB_HOST
-          - POSTGRES_DB=$DB_NAME
-          - POSTGRES_USER=$DB_USER
-          - POSTGRES_PASSWORD=$DB_PASS
-          - POSTGRES_PORT=5432
-          - SQLALCHEMY_DATABASE_URI=postgresql://$DB_USER:$DB_PASS@$DB_HOST:5432/$DB_NAME
-          - CORS_ALLOWED_ORIGINS=*
-          - API_GATEWAY_URL=https://${aws_api_gateway_deployment.main.rest_api_id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}
-          - PORT=3001
-          - SERVICE_URL=http://localhost:3001
-          - ENVIRONMENT=${var.environment}
-        ports:
-          - "3001:3001"
-        restart: always
-        command: >
-          sh -c "
-            echo 'Esperando 30 segundos para asegurar conexión a la BD...' &&
-            sleep 30 &&
-            echo 'Iniciando servicio con conexión PostgreSQL TCP/IP a $DB_HOST:5432' &&
-            gunicorn --bind 0.0.0.0:3001 --workers 2 --timeout 120 app:app
-          "
-    EOFDC
+  version: '3.8'
+  services:
+    user-service:
+      image: ${var.dockerhub_username}/appgestion-user-service:latest
+      container_name: user-service
+      environment:
+        - POSTGRES_HOST=$DB_HOST
+        - POSTGRES_DB=$DB_NAME
+        - POSTGRES_USER=$DB_USER
+        - POSTGRES_PASSWORD=$DB_PASS
+        - POSTGRES_PORT=5432
+        - CORS_ALLOWED_ORIGINS=*
+        - API_GATEWAY_URL=https://${aws_api_gateway_deployment.main.rest_api_id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}
+        - PORT=3001
+        - SERVICE_URL=http://localhost:3001
+        - ENVIRONMENT=${var.environment}
+        - DB_MAX_RETRIES=60
+        - DB_RETRY_INTERVAL=5
+        - PYTHONUNBUFFERED=1
+      ports:
+        - "3001:3001"
+      restart: always
+  EOFDC
     
     # Iniciar servicio
     cd /home/ubuntu/appgestion
+    echo "Descargando imagen Docker..."
     docker-compose pull
+    
+    echo "Iniciando servicio con docker-compose..."
     docker-compose up -d
     
-    # Verificar logs para diagnostico
-    echo "==== Iniciando servicio de usuarios ====" > /var/log/appgestion-startup.log
-    docker ps -a >> /var/log/appgestion-startup.log
-    docker logs user-service >> /var/log/appgestion-startup.log 2>&1 &
+    echo "Esperando a que el servicio esté disponible..."
+    sleep 10
+    
+    # Verificar logs y estado
+    echo "Estado de contenedores:"
+    docker ps -a
+    
+    echo "Logs del servicio user-service:"
+    docker logs user-service
+    
+    echo "=== FIN CONFIGURACIÓN USER SERVICE $(date) ==="
   EOF
   )
   
@@ -560,9 +639,14 @@ resource "aws_launch_template" "product_service" {
   
   user_data = base64encode(<<-EOF
     #!/bin/bash
-    # Actualizar sistema y instalar dependencias
+    # Configurar logging detallado para diagnóstico
+    exec > >(tee /var/log/user-data-productservice.log|logger -t user-data -s 2>/dev/console) 2>&1
+    
+    echo "=== INICIO CONFIGURACIÓN PRODUCT SERVICE $(date) ==="
+    
+    # Actualizar sistema e instalar dependencias
     apt-get update && apt-get upgrade -y
-    apt-get install -y docker.io docker-compose awscli python3-pip curl jq
+    apt-get install -y docker.io docker-compose awscli python3-pip curl jq postgresql-client
     
     # Configurar Docker
     systemctl enable docker
@@ -575,76 +659,150 @@ resource "aws_launch_template" "product_service" {
     echo "region = ${var.aws_region}" >> /home/ubuntu/.aws/config
     chown -R ubuntu:ubuntu /home/ubuntu/.aws
 
-    # Crear directorio para la aplicacion
+    # Crear directorio de aplicación
     mkdir -p /home/ubuntu/appgestion
     chown -R ubuntu:ubuntu /home/ubuntu/appgestion
     
-    # Para evitar problemas de Docker ContainerConfig
-    echo '{"experimental": true}' > /etc/docker/daemon.json
-    systemctl restart docker
+    # Obtener secretos de AWS
+    echo "Obteniendo secretos de base de datos..."
+    SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_credentials.name} --region ${var.aws_region} --query SecretString --output text)
     
-    # Obtener secretos y configurar el servicio
-    SECRET_VALUE=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_credentials.name} --region ${var.aws_region} --query SecretString --output text)
-    DB_HOST=$(echo $SECRET_VALUE | jq -r '.host_product')
-    DB_NAME=$(echo $SECRET_VALUE | jq -r '.db_name_product')
-    DB_USER=$(echo $SECRET_VALUE | jq -r '.username')
-    DB_PASS=$(echo $SECRET_VALUE | jq -r '.password')
+    # Extraer valores con validación y mensaje detallado
+    DB_HOST=$(echo $SECRET_JSON | jq -r '.host_product // empty')
+    if [ -z "$DB_HOST" ]; then
+      echo "ERROR: No se pudo extraer host_product del secreto"
+      echo "SECRET_JSON: $SECRET_JSON"
+      # Usar valor de respaldo
+      DB_HOST="${aws_db_instance.product_db.address}"
+      echo "Usando valor de respaldo: $DB_HOST"
+    fi
     
-    # Obtener credenciales de Docker Hub
-    DOCKER_SECRET=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.docker_credentials.name} --region ${var.aws_region} --query SecretString --output text)
-    DOCKER_USER=$(echo $DOCKER_SECRET | jq -r '.username')
-    DOCKER_PASS=$(echo $DOCKER_SECRET | jq -r '.password')
+    DB_NAME=$(echo $SECRET_JSON | jq -r '.db_name_product // empty')
+    if [ -z "$DB_NAME" ]; then
+      echo "ERROR: No se pudo extraer db_name_product del secreto"
+      DB_NAME="${var.db_name_product}"
+      echo "Usando valor de respaldo: $DB_NAME"
+    fi
     
-    # Login en Docker Hub
-    echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+    DB_USER=$(echo $SECRET_JSON | jq -r '.username // empty')
+    if [ -z "$DB_USER" ]; then
+      echo "ERROR: No se pudo extraer username del secreto"
+      DB_USER="${var.db_username}"
+      echo "Usando valor de respaldo: $DB_USER"
+    fi
     
-    # Iniciar log de diagnóstico
-    echo "==== CONFIGURACIÓN PRODUCT SERVICE $(date) ====" > /var/log/appgestion-startup.log
-    echo "DB_HOST: $DB_HOST" >> /var/log/appgestion-startup.log
-    echo "DB_NAME: $DB_NAME" >> /var/log/appgestion-startup.log
-    echo "DB_USER: $DB_USER" >> /var/log/appgestion-startup.log
-    echo "Creando docker-compose.yml..." >> /var/log/appgestion-startup.log
+    DB_PASS=$(echo $SECRET_JSON | jq -r '.password // empty')
+    if [ -z "$DB_PASS" ]; then
+      echo "ERROR: No se pudo extraer password del secreto"
+      DB_PASS="${var.db_password}"
+      echo "Usando valor de respaldo: (contraseña oculta)"
+    fi
+    
+    # Probar conexión directa a PostgreSQL
+    echo "Verificando conexión directa a la base de datos..."
+    export PGPASSWORD="$DB_PASS"
 
-    # Crear docker-compose.yml con comando para esperar a la base de datos
+    for i in {1..20}; do
+      echo "Intento $i: Conectando a PostgreSQL en $DB_HOST:5432..."
+      if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT version();" > /dev/null 2>&1; then
+        echo "✅ Conexión PostgreSQL establecida exitosamente"
+        
+        # Crear tabla de productos si no existe (verificación extra)
+        echo "Verificando/creando tabla product..."
+        psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "
+        CREATE TABLE IF NOT EXISTS product (
+          id SERIAL PRIMARY KEY,
+          name VARCHAR(100) NOT NULL,
+          description TEXT,
+          price FLOAT NOT NULL,
+          stock INTEGER DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );"
+        
+        # Insertar productos de prueba para verificar
+        echo "Insertando productos de prueba desde script de inicialización..."
+        psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "
+        INSERT INTO product (name, description, price, stock)
+        VALUES 
+          ('Producto Inicial 1', 'Descripción del producto inicial 1', 199.99, 25),
+          ('Producto Inicial 2', 'Descripción del producto inicial 2', 299.99, 10)
+        ON CONFLICT DO NOTHING;"
+        
+        # Verificar que se insertaron los productos
+        echo "Productos actuales en la base de datos:"
+        psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT id, name, price, stock FROM product;"
+        break
+      else
+        echo "Fallo en intento $i. Reintentando en 5 segundos..."
+        sleep 5
+      fi
+      
+      if [ $i -eq 20 ]; then
+        echo "❌ No se pudo conectar a PostgreSQL después de 20 intentos"
+      fi
+    done
+    
+    # Obtener credenciales Docker Hub
+    echo "Obteniendo credenciales Docker Hub..."
+    DOCKER_SECRET=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.docker_credentials.name} --region ${var.aws_region} --query SecretString --output text)
+    DOCKER_USER=$(echo $DOCKER_SECRET | jq -r '.username // empty')
+    DOCKER_PASS=$(echo $DOCKER_SECRET | jq -r '.password // empty')
+    
+    if [ -n "$DOCKER_USER" ] && [ -n "$DOCKER_PASS" ]; then
+      echo "Iniciando sesión en Docker Hub..."
+      echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+    else
+      echo "❌ ERROR: No se pudieron obtener credenciales válidas de Docker Hub"
+      echo "DOCKER_SECRET: $DOCKER_SECRET"
+    fi
+    
+    # Crear docker-compose.yml
+    echo "Creando docker-compose.yml..."
     cat > /home/ubuntu/appgestion/docker-compose.yml << EOFDC
-    version: '3.8'
-    services:
-      product-service:
-        image: ${var.dockerhub_username}/appgestion-product-service:latest
-        container_name: product-service
-        environment:
-          - POSTGRES_HOST=$DB_HOST
-          - POSTGRES_DB=$DB_NAME
-          - POSTGRES_USER=$DB_USER
-          - POSTGRES_PASSWORD=$DB_PASS
-          - POSTGRES_PORT=5432
-          - SQLALCHEMY_DATABASE_URI=postgresql://$DB_USER:$DB_PASS@$DB_HOST:5432/$DB_NAME
-          - CORS_ALLOWED_ORIGINS=*
-          - API_GATEWAY_URL=https://${aws_api_gateway_deployment.main.rest_api_id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}
-          - PORT=3002
-          - SERVICE_URL=http://localhost:3002
-          - ENVIRONMENT=${var.environment}
-        ports:
-          - "3002:3002"
-        restart: always
-        command: >
-          sh -c "
-            echo 'Esperando 30 segundos para asegurar conexión a la BD...' &&
-            sleep 30 &&
-            echo 'Iniciando servicio con conexión PostgreSQL TCP/IP a $DB_HOST:5432' &&
-            gunicorn --bind 0.0.0.0:3002 --workers 2 --timeout 120 app:app
-          "
-    EOFDC
+  version: '3.8'
+  services:
+    product-service:
+      image: ${var.dockerhub_username}/appgestion-product-service:latest
+      container_name: product-service
+      environment:
+        - POSTGRES_HOST=$DB_HOST
+        - POSTGRES_DB=$DB_NAME
+        - POSTGRES_USER=$DB_USER
+        - POSTGRES_PASSWORD=$DB_PASS
+        - POSTGRES_PORT=5432
+        - CORS_ALLOWED_ORIGINS=*
+        - API_GATEWAY_URL=https://${aws_api_gateway_deployment.main.rest_api_id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}
+        - PORT=3002
+        - SERVICE_URL=http://localhost:3002
+        - ENVIRONMENT=${var.environment}
+        - DB_MAX_RETRIES=60
+        - DB_RETRY_INTERVAL=5
+        - PYTHONUNBUFFERED=1
+      ports:
+        - "3002:3002"
+      restart: always
+  EOFDC
     
     # Iniciar servicio
     cd /home/ubuntu/appgestion
+    echo "Descargando imagen Docker..."
     docker-compose pull
+    
+    echo "Iniciando servicio con docker-compose..."
     docker-compose up -d
     
-    # Verificar logs para diagnostico
-    echo "==== Iniciando servicio de productos ====" > /var/log/appgestion-startup.log
-    docker ps -a >> /var/log/appgestion-startup.log
-    docker logs product-service >> /var/log/appgestion-startup.log 2>&1 &
+    echo "Esperando a que el servicio esté disponible..."
+    sleep 10
+    
+    # Verificar logs y estado
+    echo "Estado de contenedores:"
+    docker ps -a
+    
+    echo "Logs del servicio product-service:"
+    docker logs product-service
+    
+    echo "=== FIN CONFIGURACIÓN PRODUCT SERVICE $(date) ==="
   EOF
   )
   

@@ -27,19 +27,22 @@ db_host = os.environ.get("POSTGRES_HOST", "localhost")
 db_port = os.environ.get("POSTGRES_PORT", "5432")
 db_name = os.environ.get("POSTGRES_DB", "product_db")
 
-# Forzar conexión TCP/IP explícitamente
-connection_string = f'postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
-logger.info(f"Intentando conectar a: {db_host}:{db_port}/{db_name}")
-app.config['SQLALCHEMY_DATABASE_URI'] = connection_string
+# Registrar valores para diagnóstico
+logger.info(f"Product Service - Parámetros de conexión DB: host={db_host}, port={db_port}, db={db_name}, user={db_user}")
+
+# IMPORTANTE: Forzar explícitamente conexión TCP/IP en vez de socket Unix
+# La forma correcta de conectarse a RDS desde EC2
+connection_uri = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+logger.info(f"Product Service - URI de conexión: {connection_uri.replace(db_password, '******')}")
+
+app.config['SQLALCHEMY_DATABASE_URI'] = connection_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_pre_ping': True,
-    'pool_recycle': 1800,
-    'pool_timeout': 30,
+    'pool_pre_ping': True,  # Verificar conexión antes de usarla
+    'pool_recycle': 1800,   # Reciclar conexiones cada 30 min
+    'pool_timeout': 30,     # Timeout de conexión
     'connect_args': {
-        'host': db_host,  # Forzar el host explícitamente
-        'port': int(db_port),  # Forzar el puerto explícitamente
-        'application_name': 'product-service'  # Ayuda con la identificación de conexiones
+        'options': f'-c search_path=public -c statement_timeout=60000'  # Opciones adicionales para psycopg2
     }
 }
 
@@ -134,9 +137,37 @@ def initialize_database():
     max_retries = int(os.environ.get("DB_MAX_RETRIES", "30"))
     retry_interval = int(os.environ.get("DB_RETRY_INTERVAL", "5"))
     
+    # Prueba de conexión directa con psycopg2 antes de usar SQLAlchemy
     for i in range(max_retries):
         try:
-            logger.info(f"Intentando conectar a la base de datos ({i+1}/{max_retries})...")
+            logger.info(f"Product Service - Intento directo con psycopg2 ({i+1}/{max_retries})...")
+            import psycopg2
+            conn = psycopg2.connect(
+                host=db_host,
+                port=int(db_port),
+                dbname=db_name,
+                user=db_user,
+                password=db_password
+            )
+            cursor = conn.cursor()
+            cursor.execute("SELECT VERSION()")
+            version = cursor.fetchone()
+            logger.info(f"Product Service - Conexión psycopg2 exitosa: {version[0]}")
+            cursor.close()
+            conn.close()
+            break
+        except Exception as e:
+            logger.warning(f"Product Service - Intento {i+1} directo psycopg2 falló: {e}")
+            if i < max_retries - 1:
+                logger.info(f"Product Service - Reintentando en {retry_interval} segundos...")
+                time.sleep(retry_interval)
+            else:
+                logger.error(f"Product Service - No se pudo conectar directamente con psycopg2 después de {max_retries} intentos")
+    
+    # Intentar crear tablas con SQLAlchemy
+    for i in range(max_retries):
+        try:
+            logger.info(f"Product Service - Creando tablas ({i+1}/{max_retries})...")
             db.create_all()
             
             # Crear productos de prueba si la BD está vacía
@@ -147,18 +178,18 @@ def initialize_database():
                 ]
                 db.session.bulk_save_objects(test_products)
                 db.session.commit()
-                logger.info("Productos de prueba creados")
+                logger.info("Product Service - Productos de prueba creados")
                 
-            logger.info("Conexión exitosa a la base de datos")
+            logger.info("Product Service - Conexión exitosa a la base de datos y tablas creadas")
             return True
             
         except Exception as e:
-            logger.warning(f"Error al conectar: {e}")
+            logger.warning(f"Product Service - Error al crear tablas: {e}")
             if i < max_retries - 1:
-                logger.info(f"Reintentando en {retry_interval} segundos...")
+                logger.info(f"Product Service - Reintentando en {retry_interval} segundos...")
                 time.sleep(retry_interval)
     
-    logger.error("No se pudo conectar a la base de datos después de múltiples intentos")
+    logger.error("Product Service - No se pudo inicializar la base de datos después de múltiples intentos")
     return False
 
 if __name__ == '__main__':

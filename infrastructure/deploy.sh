@@ -195,18 +195,18 @@ else
   echo -e "${RED}⚠️ No se pudo encontrar el ID de la distribución de CloudFront${NC}"
 fi
 
-# Esperar a que los servicios estén disponibles (API Gateway puede tardar unos minutos)
-echo -e "${YELLOW}Esperando que los servicios estén disponibles (5m)...${NC}"
-sleep 300
+# Esperar a que los servicios estén disponibles
+echo -e "${YELLOW}Esperando que los servicios estén disponibles (10m)...${NC}"
+sleep 300  # Mantener 5 minutos iniciales para dar tiempo a que se creen los recursos
 
 # Verificar API Gateway
 echo -e "${GREEN}=== Verificando API Gateway ===${NC}"
 
-# Función para intentar verificar la salud varias veces
+# Función para verificar la salud de un endpoint
 check_health_endpoint() {
   local endpoint=$1
   local name=$2
-  local max_attempts=10
+  local max_attempts=20
   local wait_time=30
   
   echo -e "${YELLOW}Probando endpoint de $name...${NC}"
@@ -225,18 +225,32 @@ check_health_endpoint() {
   done
   
   echo -e "${RED}❌ Error al acceder al servicio de $name después de $max_attempts intentos.${NC}"
+  # Esto no debe fallar el script completo
   return 1
 }
 
-echo -e "${YELLOW}Probando endpoint de productos...${NC}"
-PRODUCT_HEALTH=$(curl -s "${API_URL}products/health")
-if [[ "$PRODUCT_HEALTH" == *'"status":"healthy"'* ]]; then
-  echo -e "${GREEN}✅ API Gateway conectado con servicio de productos${NC}"
-else
-  echo -e "${RED}❌ Error al acceder al servicio de productos: $PRODUCT_HEALTH${NC}"
-  echo -e "${YELLOW}Verificando logs de la instancia...${NC}"
-  # Este paso es opcional, requiere configuración adicional
-fi
+# Verificar ambos endpoints
+check_health_endpoint "${API_URL}users/health" "usuarios"
+check_health_endpoint "${API_URL}products/health" "productos"
+
+# Intentar verificar directamente las tablas en las BDs
+echo -e "${YELLOW}Verificando tablas en las bases de datos...${NC}"
+
+# Obtener credenciales de DB (aunque no sea lo más seguro, es útil para diagnóstico)
+DB_USER=$(grep -oP 'db_username\s*=\s*"\K[^"]*' "$TFVARS_PATH")
+DB_PASS=$(grep -oP 'db_password\s*=\s*"\K[^"]*' "$TFVARS_PATH")
+
+# Usuarios
+echo -e "${YELLOW}Usuarios registrados:${NC}"
+export PGPASSWORD="$DB_PASS"
+psql -h "${USER_DB_ENDPOINT%:*}" -U "$DB_USER" -d "$DB_NAME_USER" -c "SELECT id, name, email FROM \"user\";" || \
+echo -e "${RED}No se pudo conectar a la base de datos de usuarios${NC}"
+
+# Productos
+echo -e "${YELLOW}Productos registrados:${NC}"
+export PGPASSWORD="$DB_PASS"
+psql -h "${PRODUCT_DB_ENDPOINT%:*}" -U "$DB_USER" -d "$DB_NAME_PRODUCT" -c "SELECT id, name, price, stock FROM product;" || \
+echo -e "${RED}No se pudo conectar a la base de datos de productos${NC}"
 
 # Mostrar información de despliegue
 echo -e "${GREEN}=== Despliegue completado exitosamente ===${NC}"
