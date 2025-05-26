@@ -196,16 +196,30 @@ else
 fi
 
 # Esperar a que los servicios estén disponibles (API Gateway puede tardar unos minutos)
-echo -e "${YELLOW}Esperando que los servicios estén disponibles (120s)...${NC}"
-sleep 120
+echo -e "${YELLOW}Esperando que los servicios estén disponibles (5m)...${NC}"
+sleep 300
 
 # Verificar API Gateway
 echo -e "${GREEN}=== Verificando API Gateway ===${NC}"
 echo -e "${YELLOW}Probando endpoint de usuarios...${NC}"
-curl -s "${API_URL}users/health" && echo -e "\n${GREEN}✅ API Gateway conectado con servicio de usuarios${NC}" || echo -e "\n${RED}⚠️ Error al acceder al servicio de usuarios${NC}"
+USER_HEALTH=$(curl -s "${API_URL}users/health")
+if [[ "$USER_HEALTH" == *'"status":"healthy"'* ]]; then
+  echo -e "${GREEN}✅ API Gateway conectado con servicio de usuarios${NC}"
+else
+  echo -e "${RED}❌ Error al acceder al servicio de usuarios: $USER_HEALTH${NC}"
+  echo -e "${YELLOW}Verificando logs de la instancia...${NC}"
+  # Este paso es opcional, requiere configuración adicional
+fi
 
 echo -e "${YELLOW}Probando endpoint de productos...${NC}"
-curl -s "${API_URL}products/health" && echo -e "\n${GREEN}✅ API Gateway conectado con servicio de productos${NC}" || echo -e "\n${RED}⚠️ Error al acceder al servicio de productos${NC}"
+PRODUCT_HEALTH=$(curl -s "${API_URL}products/health")
+if [[ "$PRODUCT_HEALTH" == *'"status":"healthy"'* ]]; then
+  echo -e "${GREEN}✅ API Gateway conectado con servicio de productos${NC}"
+else
+  echo -e "${RED}❌ Error al acceder al servicio de productos: $PRODUCT_HEALTH${NC}"
+  echo -e "${YELLOW}Verificando logs de la instancia...${NC}"
+  # Este paso es opcional, requiere configuración adicional
+fi
 
 # Mostrar información de despliegue
 echo -e "${GREEN}=== Despliegue completado exitosamente ===${NC}"

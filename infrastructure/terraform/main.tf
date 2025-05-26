@@ -8,7 +8,7 @@ terraform {
   }
 }
 
-# Buscar la AMI de Ubuntu más reciente
+# Buscar la AMI de Ubuntu mas reciente
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical (fabricante de Ubuntu)
@@ -49,7 +49,7 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
-# Subredes públicas y privadas
+# Subredes publicas y privadas
 resource "aws_subnet" "public" {
   count                   = length(var.availability_zones)
   vpc_id                  = aws_vpc.main.id
@@ -100,7 +100,7 @@ resource "aws_route_table_association" "public" {
 # Grupo de seguridad para ALB
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb-sg"
-  description = "Permite tráfico HTTP/HTTPS para los balanceadores de carga"
+  description = "Permite trafico HTTP/HTTPS para los balanceadores de carga"
   vpc_id      = aws_vpc.main.id
   
   # HTTP
@@ -137,10 +137,10 @@ resource "aws_security_group" "alb" {
 # Grupo para servicios de usuarios
 resource "aws_security_group" "user_service" {
   name        = "${var.project_name}-user-service-sg"
-  description = "Permite tráfico necesario para el servicio de usuarios"
+  description = "Permite trafico necesario para el servicio de usuarios"
   vpc_id      = aws_vpc.main.id
   
-  # SSH - solo desde IP específica
+  # SSH - solo desde IP especifica
   ingress {
     from_port   = 22
     to_port     = 22
@@ -149,7 +149,7 @@ resource "aws_security_group" "user_service" {
     description = "SSH acceso administrativo"
   }
   
-  # Puerto específico para servicio de usuarios - Solo desde ALB
+  # Puerto especifico para servicio de usuarios - Solo desde ALB
   ingress {
     from_port       = 3001
     to_port         = 3001
@@ -158,7 +158,7 @@ resource "aws_security_group" "user_service" {
     description     = "User Service API desde ALB"
   }
   
-  # Tráfico saliente
+  # Trafico saliente
   egress {
     from_port   = 0
     to_port     = 0
@@ -175,10 +175,10 @@ resource "aws_security_group" "user_service" {
 # Grupo para servicios de productos
 resource "aws_security_group" "product_service" {
   name        = "${var.project_name}-product-service-sg"
-  description = "Permite tráfico necesario para el servicio de productos"
+  description = "Permite trafico necesario para el servicio de productos"
   vpc_id      = aws_vpc.main.id
   
-  # SSH - solo desde IP específica
+  # SSH - solo desde IP especifica
   ingress {
     from_port   = 22
     to_port     = 22
@@ -187,7 +187,7 @@ resource "aws_security_group" "product_service" {
     description = "SSH acceso administrativo"
   }
   
-  # Puerto específico para servicio de productos - Solo desde ALB
+  # Puerto especifico para servicio de productos - Solo desde ALB
   ingress {
     from_port       = 3002
     to_port         = 3002
@@ -196,7 +196,7 @@ resource "aws_security_group" "product_service" {
     description     = "Product Service API desde ALB"
   }
   
-  # Tráfico saliente
+  # Trafico saliente
   egress {
     from_port   = 0
     to_port     = 0
@@ -259,7 +259,7 @@ resource "aws_security_group" "rds" {
 # SECRETS MANAGER
 resource "aws_secretsmanager_secret" "db_credentials" {
   name                    = "${var.project_name}-db-credentials-${formatdate("YYYYMMDD-HHmmss", timestamp())}"
-  recovery_window_in_days = 0  # Sin período de recuperación para facilitar pruebas
+  recovery_window_in_days = 0  # Sin periodo de recuperacion para facilitar pruebas
   
   tags = {
     Name        = "${var.project_name}-db-credentials"
@@ -280,7 +280,7 @@ resource "aws_secretsmanager_secret_version" "db_credentials" {
     port            = 5432
   })
 
-  # Asegurar que las bases de datos estén creadas antes de guardar sus direcciones
+  # Asegurar que las bases de datos esten creadas antes de guardar sus direcciones
   depends_on = [
     aws_db_instance.user_db,
     aws_db_instance.product_db
@@ -326,7 +326,7 @@ resource "aws_iam_role" "ec2_role" {
 
 resource "aws_iam_policy" "secrets_access" {
   name        = "${var.project_name}-secrets-access"
-  description = "Permite acceso a secretos específicos"
+  description = "Permite acceso a secretos especificos"
   
   policy = jsonencode({
     Version = "2012-10-17",
@@ -384,7 +384,7 @@ resource "aws_db_instance" "user_db" {
   password             = var.db_password
   parameter_group_name = "default.postgres13"
   skip_final_snapshot  = true
-  publicly_accessible  = true  # Para desarrollo, facilita conexión directa
+  publicly_accessible  = true  # Para desarrollo, facilita conexion directa
   db_subnet_group_name = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
   
@@ -408,7 +408,7 @@ resource "aws_db_instance" "product_db" {
   password             = var.db_password
   parameter_group_name = "default.postgres13"
   skip_final_snapshot  = true
-  publicly_accessible  = true  # Para desarrollo, facilita conexión directa
+  publicly_accessible  = true  # Para desarrollo, facilita conexion directa
   db_subnet_group_name = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
   
@@ -421,7 +421,7 @@ resource "aws_db_instance" "product_db" {
 }
 
 # INSTANCIAS EC2 Y AUTO SCALING
-# Launch Template para User Service - Script mejorado para conexión a BD
+# Launch Template para User Service - Script mejorado para conexion a BD
 resource "aws_launch_template" "user_service" {
   name_prefix   = "${var.project_name}-user-service-"
   image_id      = data.aws_ami.ubuntu.id
@@ -451,7 +451,7 @@ resource "aws_launch_template" "user_service" {
     echo "region = ${var.aws_region}" >> /home/ubuntu/.aws/config
     chown -R ubuntu:ubuntu /home/ubuntu/.aws
 
-    # Crear directorio para la aplicación
+    # Crear directorio para la aplicacion
     mkdir -p /home/ubuntu/appgestion
     chown -R ubuntu:ubuntu /home/ubuntu/appgestion
     
@@ -502,7 +502,7 @@ resource "aws_launch_template" "user_service" {
     docker-compose pull
     docker-compose up -d
     
-    # Verificar logs para diagnóstico
+    # Verificar logs para diagnostico
     echo "==== Iniciando servicio de usuarios ====" > /var/log/appgestion-startup.log
     docker ps -a >> /var/log/appgestion-startup.log
     docker logs user-service >> /var/log/appgestion-startup.log 2>&1 &
@@ -530,7 +530,7 @@ resource "aws_launch_template" "user_service" {
   }
 }
 
-# Launch Template para Product Service - Script mejorado para conexión a BD
+# Launch Template para Product Service - Script mejorado para conexion a BD
 resource "aws_launch_template" "product_service" {
   name_prefix   = "${var.project_name}-product-service-"
   image_id      = data.aws_ami.ubuntu.id
@@ -560,7 +560,7 @@ resource "aws_launch_template" "product_service" {
     echo "region = ${var.aws_region}" >> /home/ubuntu/.aws/config
     chown -R ubuntu:ubuntu /home/ubuntu/.aws
 
-    # Crear directorio para la aplicación
+    # Crear directorio para la aplicacion
     mkdir -p /home/ubuntu/appgestion
     chown -R ubuntu:ubuntu /home/ubuntu/appgestion
     
@@ -611,7 +611,7 @@ resource "aws_launch_template" "product_service" {
     docker-compose pull
     docker-compose up -d
     
-    # Verificar logs para diagnóstico
+    # Verificar logs para diagnostico
     echo "==== Iniciando servicio de productos ====" > /var/log/appgestion-startup.log
     docker ps -a >> /var/log/appgestion-startup.log
     docker logs product-service >> /var/log/appgestion-startup.log 2>&1 &
@@ -825,7 +825,7 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
   }
 }
 
-# Configuración de acceso al bucket
+# Configuracion de acceso al bucket
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
   block_public_acls       = true
@@ -834,7 +834,7 @@ resource "aws_s3_bucket_public_access_block" "frontend" {
   restrict_public_buckets = true
 }
 
-# Configuración para website hosting
+# Configuracion para website hosting
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
 
@@ -852,7 +852,7 @@ resource "aws_cloudfront_origin_access_identity" "frontend" {
   comment = "OAI for ${var.project_name} frontend"
 }
 
-# Política del bucket para CloudFront
+# Politica del bucket para CloudFront
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({
@@ -872,7 +872,7 @@ resource "aws_s3_bucket_policy" "frontend" {
   depends_on = [aws_s3_bucket_public_access_block.frontend]
 }
 
-# Distribución CloudFront
+# Distribucion CloudFront
 resource "aws_cloudfront_distribution" "frontend" {
   origin {
     domain_name = aws_s3_bucket.frontend.bucket_regional_domain_name
@@ -971,7 +971,7 @@ resource "aws_api_gateway_resource" "products_proxy" {
   path_part   = "{proxy+}"
 }
 
-# Métodos e integraciones para user service - apuntando al ALB
+# Metodos e integraciones para user service - apuntando al ALB
 resource "aws_api_gateway_method" "users_root" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.users.id
@@ -1020,7 +1020,7 @@ resource "aws_api_gateway_integration" "users_subpath" {
   }
 }
 
-# Métodos e integraciones para product service - apuntando al ALB
+# Metodos e integraciones para product service - apuntando al ALB
 resource "aws_api_gateway_method" "products_root" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.products.id
@@ -1069,8 +1069,8 @@ resource "aws_api_gateway_integration" "products_subpath" {
   }
 }
 
-# Configuración CORS mejorada
-# Métodos OPTIONS para CORS
+# Configuracion CORS mejorada
+# Metodos OPTIONS para CORS
 resource "aws_api_gateway_method" "users_options" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.users.id

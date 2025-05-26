@@ -4,12 +4,13 @@ WORKDIR /app
 
 # Instalación de dependencias
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir gunicorn
 
 # Copiado del código
 COPY app.py .
 
-# Variables de entorno predeterminadas
+# Variables de entorno
 ENV POSTGRES_USER=dbadmin \
     POSTGRES_PASSWORD=placeholder_password \
     POSTGRES_HOST=localhost \
@@ -18,13 +19,9 @@ ENV POSTGRES_USER=dbadmin \
     DB_MAX_RETRIES=30 \
     DB_RETRY_INTERVAL=5 \
     CORS_ALLOWED_ORIGINS="*" \
-    ENVIRONMENT=production \
-    # Variables para API Gateway y comunicación entre servicios
-    SERVICE_URL="http://localhost:3001" \
-    API_GATEWAY_URL="http://localhost:8080" \
-    # Versión del despliegue para seguimiento
-    DEPLOYMENT_VERSION="1.0.0"
+    PORT=3001
 
 EXPOSE 3001
 
-CMD ["python", "app.py"]
+# Ejecutar con gunicorn para producción
+CMD gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 app:app
