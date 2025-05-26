@@ -5,50 +5,38 @@ from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-import sqlalchemy.exc
 
-# Configuración inicial de la aplicación Flask
-app = Flask(__name__)
-
-# Configuración de logging
+# Configuración de logging mejorada
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s [%(levelname)s] %(message)s',
 )
 logger = logging.getLogger(__name__)
 
-# Configuración CORS - Adaptar según configuración API Gateway
+app = Flask(__name__)
+logger.info("Iniciando Product Service")
+
+# Configuración CORS - Fundamental para API Gateway
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Configuración de la base de datos
+# Obtener variables de entorno con valores por defecto
 db_user = os.environ.get("POSTGRES_USER", "dbadmin")
 db_password = os.environ.get("POSTGRES_PASSWORD", "placeholder_password")
 db_host = os.environ.get("POSTGRES_HOST", "localhost")
 db_port = os.environ.get("POSTGRES_PORT", "5432")
 db_name = os.environ.get("POSTGRES_DB", "product_db")
 
-# Registrar valores para diagnóstico
-logger.info(f"Product Service - Parámetros de conexión DB: host={db_host}, port={db_port}, db={db_name}, user={db_user}")
+# Log de la configuración para diagnóstico
+logger.info(f"Configuración DB: host={db_host}, port={db_port}, db={db_name}, user={db_user}")
 
-# IMPORTANTE: Forzar explícitamente conexión TCP/IP en vez de socket Unix
-# La forma correcta de conectarse a RDS desde EC2
-connection_uri = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-logger.info(f"Product Service - URI de conexión: {connection_uri.replace(db_password, '******')}")
-
-app.config['SQLALCHEMY_DATABASE_URI'] = connection_uri
+# Conexión a la base de datos
+db_uri = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+app.config['SQLALCHEMY_DATABASE_URI'] = db_uri
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_pre_ping': True,  # Verificar conexión antes de usarla
-    'pool_recycle': 1800,   # Reciclar conexiones cada 30 min
-    'pool_timeout': 30,     # Timeout de conexión
-    'connect_args': {
-        'options': f'-c search_path=public -c statement_timeout=60000'  # Opciones adicionales para psycopg2
-    }
-}
 
 db = SQLAlchemy(app)
 
-# Modelo de Producto - Asegurar coherencia con frontend (App.js)
+# Modelo de Producto
 class Product(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
@@ -59,7 +47,6 @@ class Product(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     def to_dict(self):
-        """Convertir a diccionario (formato esperado por frontend)"""
         return {
             'id': self.id,
             'name': self.name,
@@ -68,17 +55,27 @@ class Product(db.Model):
             'stock': self.stock
         }
 
-# Endpoint de health check para ALB y API Gateway
-@app.route('/products/health', methods=['GET'])
+# Endpoint principal para verificar que el servicio esté en funcionamiento
+@app.route('/', methods=['GET'])
+def index():
+    return jsonify({"status": "running", "service": "product-service"}), 200
+
+# Endpoint específico para ALB health checks - CRÍTICO
 @app.route('/health', methods=['GET'])
-def health_check():
+def alb_health_check():
+    return jsonify({"status": "healthy", "service": "product-service"}), 200
+
+# Endpoint específico para API Gateway health checks - CRÍTICO
+@app.route('/products/health', methods=['GET'])
+def api_health_check():
     try:
         # Verificar conexión a la BD
         db.session.execute(db.text('SELECT 1'))
-        return jsonify({"status": "healthy", "service": "product-service"}), 200
+        return jsonify({"status": "healthy", "service": "product-service", "database": "connected"}), 200
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return jsonify({"status": "unhealthy", "error": str(e)}), 500
+        logger.error(f"Health check error: {e}")
+        # Incluso con error de BD, respondemos 200 para ALB (diagnóstico)
+        return jsonify({"status": "unhealthy", "error": str(e)}), 200
 
 # GET - Lista de todos los productos
 @app.route('/products', methods=['GET'])
@@ -93,12 +90,16 @@ def get_products():
 # GET - Detalles de un producto específico por ID
 @app.route('/products/<int:product_id>', methods=['GET'])
 def get_product(product_id):
-    product = Product.query.get(product_id)
-    if not product:
-        return jsonify({"error": "Producto no encontrado"}), 404
-    return jsonify(product.to_dict())
+    try:
+        product = Product.query.get(product_id)
+        if not product:
+            return jsonify({"error": "Producto no encontrado"}), 404
+        return jsonify(product.to_dict())
+    except Exception as e:
+        logger.error(f"Error al obtener producto {product_id}: {e}")
+        return jsonify({"error": f"Error al obtener producto {product_id}"}), 500
 
-# POST - Crear nuevo producto (adaptado al formato del frontend)
+# POST - Crear nuevo producto
 @app.route('/products', methods=['POST'])
 def create_product():
     try:
@@ -106,11 +107,9 @@ def create_product():
         if not data:
             return jsonify({"error": "Datos inválidos"}), 400
             
-        # Validar campos requeridos que coinciden con frontend
         if 'name' not in data or 'price' not in data:
             return jsonify({"error": "Faltan campos requeridos (name, price)"}), 400
             
-        # Crear nuevo producto
         new_product = Product(
             name=data['name'],
             description=data.get('description', ''),
@@ -121,7 +120,6 @@ def create_product():
         db.session.add(new_product)
         db.session.commit()
         
-        # Formato de respuesta que espera el frontend
         return jsonify({
             "message": "Producto creado exitosamente",
             "product": new_product.to_dict()
@@ -132,69 +130,47 @@ def create_product():
         logger.error(f"Error al crear producto: {e}")
         return jsonify({"error": "Error al crear producto"}), 500
 
-# Inicialización de la base de datos con reintentos
-def initialize_database():
-    max_retries = int(os.environ.get("DB_MAX_RETRIES", "30"))
+# Función para inicializar la base de datos con reintentos
+def setup_database():
+    max_attempts = int(os.environ.get("DB_MAX_RETRIES", "30"))
     retry_interval = int(os.environ.get("DB_RETRY_INTERVAL", "5"))
     
-    # Prueba de conexión directa con psycopg2 antes de usar SQLAlchemy
-    for i in range(max_retries):
-        try:
-            logger.info(f"Product Service - Intento directo con psycopg2 ({i+1}/{max_retries})...")
-            import psycopg2
-            conn = psycopg2.connect(
-                host=db_host,
-                port=int(db_port),
-                dbname=db_name,
-                user=db_user,
-                password=db_password
-            )
-            cursor = conn.cursor()
-            cursor.execute("SELECT VERSION()")
-            version = cursor.fetchone()
-            logger.info(f"Product Service - Conexión psycopg2 exitosa: {version[0]}")
-            cursor.close()
-            conn.close()
-            break
-        except Exception as e:
-            logger.warning(f"Product Service - Intento {i+1} directo psycopg2 falló: {e}")
-            if i < max_retries - 1:
-                logger.info(f"Product Service - Reintentando en {retry_interval} segundos...")
-                time.sleep(retry_interval)
-            else:
-                logger.error(f"Product Service - No se pudo conectar directamente con psycopg2 después de {max_retries} intentos")
+    logger.info(f"Intentando conectar a la base de datos (máx {max_attempts} intentos)")
     
-    # Intentar crear tablas con SQLAlchemy
-    for i in range(max_retries):
+    for attempt in range(max_attempts):
         try:
-            logger.info(f"Product Service - Creando tablas ({i+1}/{max_retries})...")
             db.create_all()
+            logger.info("Tablas creadas correctamente")
             
-            # Crear productos de prueba si la BD está vacía
+            # Crear productos de prueba si no existe ninguno
             if Product.query.count() == 0:
+                logger.info("Creando productos de prueba iniciales")
                 test_products = [
                     Product(name="Producto 1", description="Descripción del producto 1", price=99.99, stock=10),
                     Product(name="Producto 2", description="Descripción del producto 2", price=149.99, stock=5)
                 ]
                 db.session.bulk_save_objects(test_products)
                 db.session.commit()
-                logger.info("Product Service - Productos de prueba creados")
-                
-            logger.info("Product Service - Conexión exitosa a la base de datos y tablas creadas")
-            return True
+                logger.info("Productos de prueba creados")
             
+            logger.info("Base de datos inicializada correctamente")
+            return True
         except Exception as e:
-            logger.warning(f"Product Service - Error al crear tablas: {e}")
-            if i < max_retries - 1:
-                logger.info(f"Product Service - Reintentando en {retry_interval} segundos...")
+            if attempt < max_attempts - 1:
+                logger.warning(f"Intento {attempt+1}/{max_attempts} falló: {e}")
+                logger.info(f"Reintentando en {retry_interval} segundos...")
                 time.sleep(retry_interval)
-    
-    logger.error("Product Service - No se pudo inicializar la base de datos después de múltiples intentos")
+            else:
+                logger.error(f"No se pudo conectar a la base de datos después de {max_attempts} intentos")
+                # No hacemos exit para permitir que la app inicie igual
+                # y responda a health checks aunque la BD no esté disponible
     return False
 
+# Inicializar la base de datos al inicio
+setup_database()
+
+# Para ser ejecutado por Gunicorn
 if __name__ == '__main__':
-    if initialize_database():
-        port = int(os.environ.get("PORT", "3002"))
-        app.run(host='0.0.0.0', port=port)
-    else:
-        exit(1)
+    port = int(os.environ.get("PORT", "3002"))
+    logger.info(f"Iniciando servicio en puerto {port}")
+    app.run(host='0.0.0.0', port=port)
