@@ -474,7 +474,14 @@ resource "aws_launch_template" "user_service" {
     # Login en Docker Hub
     echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
     
-    # Crear docker-compose.yml
+    # Iniciar log de diagnóstico
+    echo "==== CONFIGURACIÓN USER SERVICE $(date) ====" > /var/log/appgestion-startup.log
+    echo "DB_HOST: $DB_HOST" >> /var/log/appgestion-startup.log
+    echo "DB_NAME: $DB_NAME" >> /var/log/appgestion-startup.log
+    echo "DB_USER: $DB_USER" >> /var/log/appgestion-startup.log
+    echo "Creando docker-compose.yml..." >> /var/log/appgestion-startup.log
+
+    # Crear docker-compose.yml con comando para esperar a la base de datos
     cat > /home/ubuntu/appgestion/docker-compose.yml << EOFDC
     version: '3.8'
     services:
@@ -487,6 +494,7 @@ resource "aws_launch_template" "user_service" {
           - POSTGRES_USER=$DB_USER
           - POSTGRES_PASSWORD=$DB_PASS
           - POSTGRES_PORT=5432
+          - SQLALCHEMY_DATABASE_URI=postgresql://$DB_USER:$DB_PASS@$DB_HOST:5432/$DB_NAME
           - CORS_ALLOWED_ORIGINS=*
           - API_GATEWAY_URL=https://${aws_api_gateway_deployment.main.rest_api_id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}
           - PORT=3001
@@ -495,6 +503,13 @@ resource "aws_launch_template" "user_service" {
         ports:
           - "3001:3001"
         restart: always
+        command: >
+          sh -c "
+            echo 'Esperando 30 segundos para asegurar conexión a la BD...' &&
+            sleep 30 &&
+            echo 'Iniciando servicio con conexión PostgreSQL TCP/IP a $DB_HOST:5432' &&
+            gunicorn --bind 0.0.0.0:3001 --workers 2 --timeout 120 app:app
+          "
     EOFDC
     
     # Iniciar servicio
@@ -583,7 +598,14 @@ resource "aws_launch_template" "product_service" {
     # Login en Docker Hub
     echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
     
-    # Crear docker-compose.yml
+    # Iniciar log de diagnóstico
+    echo "==== CONFIGURACIÓN PRODUCT SERVICE $(date) ====" > /var/log/appgestion-startup.log
+    echo "DB_HOST: $DB_HOST" >> /var/log/appgestion-startup.log
+    echo "DB_NAME: $DB_NAME" >> /var/log/appgestion-startup.log
+    echo "DB_USER: $DB_USER" >> /var/log/appgestion-startup.log
+    echo "Creando docker-compose.yml..." >> /var/log/appgestion-startup.log
+
+    # Crear docker-compose.yml con comando para esperar a la base de datos
     cat > /home/ubuntu/appgestion/docker-compose.yml << EOFDC
     version: '3.8'
     services:
@@ -596,6 +618,7 @@ resource "aws_launch_template" "product_service" {
           - POSTGRES_USER=$DB_USER
           - POSTGRES_PASSWORD=$DB_PASS
           - POSTGRES_PORT=5432
+          - SQLALCHEMY_DATABASE_URI=postgresql://$DB_USER:$DB_PASS@$DB_HOST:5432/$DB_NAME
           - CORS_ALLOWED_ORIGINS=*
           - API_GATEWAY_URL=https://${aws_api_gateway_deployment.main.rest_api_id}.execute-api.${var.aws_region}.amazonaws.com/${var.environment}
           - PORT=3002
@@ -604,6 +627,13 @@ resource "aws_launch_template" "product_service" {
         ports:
           - "3002:3002"
         restart: always
+        command: >
+          sh -c "
+            echo 'Esperando 30 segundos para asegurar conexión a la BD...' &&
+            sleep 30 &&
+            echo 'Iniciando servicio con conexión PostgreSQL TCP/IP a $DB_HOST:5432' &&
+            gunicorn --bind 0.0.0.0:3002 --workers 2 --timeout 120 app:app
+          "
     EOFDC
     
     # Iniciar servicio

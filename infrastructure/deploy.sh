@@ -196,8 +196,8 @@ else
 fi
 
 # Esperar a que los servicios estén disponibles (API Gateway puede tardar unos minutos)
-echo -e "${YELLOW}Esperando que los servicios estén disponibles (5m)...${NC}"
-sleep 300
+echo -e "${YELLOW}Esperando que los servicios estén disponibles (10m)...${NC}"
+sleep 600
 
 # Verificar API Gateway
 echo -e "${GREEN}=== Verificando API Gateway ===${NC}"
