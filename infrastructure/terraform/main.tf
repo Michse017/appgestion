@@ -326,7 +326,7 @@ resource "aws_iam_role" "ec2_role" {
 
 resource "aws_iam_policy" "secrets_access" {
   name        = "${var.project_name}-secrets-access"
-  description = "Permite acceso a secretos específicos"
+  description = "Permite acceso a secretos especificos"
   
   policy = jsonencode({
     Version = "2012-10-17",
@@ -439,10 +439,10 @@ resource "aws_launch_template" "user_service" {
   
   user_data = base64encode(<<-EOF
     #!/bin/bash
-    # Configurar logging detallado para diagnóstico
+    # Configurar logging detallado para diagnostico
     exec > >(tee /var/log/user-data-userservice.log|logger -t user-data -s 2>/dev/console) 2>&1
     
-    echo "=== INICIO CONFIGURACIÓN USER SERVICE $(date) ==="
+    echo "=== INICIO CONFIGURACIoN USER SERVICE $(date) ==="
     
     # Actualizar sistema e instalar dependencias
     apt-get update && apt-get upgrade -y
@@ -459,7 +459,7 @@ resource "aws_launch_template" "user_service" {
     echo "region = ${var.aws_region}" >> /home/ubuntu/.aws/config
     chown -R ubuntu:ubuntu /home/ubuntu/.aws
 
-    # Crear directorio de aplicación
+    # Crear directorio de aplicacion
     mkdir -p /home/ubuntu/appgestion
     chown -R ubuntu:ubuntu /home/ubuntu/appgestion
     
@@ -467,7 +467,7 @@ resource "aws_launch_template" "user_service" {
     echo "Obteniendo secretos de base de datos..."
     SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_credentials.name} --region ${var.aws_region} --query SecretString --output text)
     
-    # Extraer valores con validación y mensaje detallado
+    # Extraer valores con validacion y mensaje detallado
     DB_HOST=$(echo $SECRET_JSON | jq -r '.host_user // empty')
     if [ -z "$DB_HOST" ]; then
       echo "ERROR: No se pudo extraer host_user del secreto"
@@ -498,16 +498,16 @@ resource "aws_launch_template" "user_service" {
       echo "Usando valor de respaldo: (contraseña oculta)"
     fi
     
-    # Probar conexión directa a PostgreSQL
-    echo "Verificando conexión directa a la base de datos..."
+    # Probar conexion directa a PostgreSQL
+    echo "Verificando conexion directa a la base de datos..."
     export PGPASSWORD="$DB_PASS"
 
     for i in {1..20}; do
       echo "Intento $i: Conectando a PostgreSQL en $DB_HOST:5432..."
       if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT version();" > /dev/null 2>&1; then
-        echo "✅ Conexión PostgreSQL establecida exitosamente"
+        echo "✅ Conexion PostgreSQL establecida exitosamente"
         
-        # Crear tabla de users si no existe (verificación extra)
+        # Crear tabla de users si no existe (verificacion extra)
         echo "Verificando/creando tabla user..."
         psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "
         CREATE TABLE IF NOT EXISTS \"user\" (
@@ -520,13 +520,13 @@ resource "aws_launch_template" "user_service" {
         );"
         
         # Insertar usuario de prueba para verificar
-        echo "Insertando usuario de prueba desde script de inicialización..."
+        echo "Insertando usuario de prueba desde script de inicializacion..."
         psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "
         INSERT INTO \"user\" (name, email, password_hash)
         VALUES ('Usuario Inicial', 'admin@example.com', 'pbkdf2:sha256:260000$gEfDtuSXtRwn1oUR$0de673f1bcc549ce4bbe3d3501169922c451da883c0e748e2f9f6202a76813a1')
         ON CONFLICT (email) DO NOTHING;"
         
-        # Verificar que se insertó el usuario
+        # Verificar que se inserto el usuario
         echo "Usuarios actuales en la base de datos:"
         psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT id, name, email FROM \"user\";"
         break
@@ -536,7 +536,7 @@ resource "aws_launch_template" "user_service" {
       fi
       
       if [ $i -eq 20 ]; then
-        echo "❌ No se pudo conectar a PostgreSQL después de 20 intentos"
+        echo "❌ No se pudo conectar a PostgreSQL despues de 20 intentos"
       fi
     done
     
@@ -547,10 +547,10 @@ resource "aws_launch_template" "user_service" {
     DOCKER_PASS=$(echo $DOCKER_SECRET | jq -r '.password // empty')
     
     if [ -n "$DOCKER_USER" ] && [ -n "$DOCKER_PASS" ]; then
-      echo "Iniciando sesión en Docker Hub..."
+      echo "Iniciando sesion en Docker Hub..."
       echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
     else
-      echo "❌ ERROR: No se pudieron obtener credenciales válidas de Docker Hub"
+      echo "❌ ERROR: No se pudieron obtener credenciales validas de Docker Hub"
       echo "DOCKER_SECRET: $DOCKER_SECRET"
     fi
     
@@ -589,7 +589,7 @@ resource "aws_launch_template" "user_service" {
     echo "Iniciando servicio con docker-compose..."
     docker-compose up -d
     
-    echo "Esperando a que el servicio esté disponible..."
+    echo "Esperando a que el servicio este disponible..."
     sleep 10
     
     # Verificar logs y estado
@@ -599,7 +599,7 @@ resource "aws_launch_template" "user_service" {
     echo "Logs del servicio user-service:"
     docker logs user-service
     
-    echo "=== FIN CONFIGURACIÓN USER SERVICE $(date) ==="
+    echo "=== FIN CONFIGURACIoN USER SERVICE $(date) ==="
   EOF
   )
   
@@ -639,10 +639,10 @@ resource "aws_launch_template" "product_service" {
   
   user_data = base64encode(<<-EOF
     #!/bin/bash
-    # Configurar logging detallado para diagnóstico
+    # Configurar logging detallado para diagnostico
     exec > >(tee /var/log/user-data-productservice.log|logger -t user-data -s 2>/dev/console) 2>&1
     
-    echo "=== INICIO CONFIGURACIÓN PRODUCT SERVICE $(date) ==="
+    echo "=== INICIO CONFIGURACIoN PRODUCT SERVICE $(date) ==="
     
     # Actualizar sistema e instalar dependencias
     apt-get update && apt-get upgrade -y
@@ -659,7 +659,7 @@ resource "aws_launch_template" "product_service" {
     echo "region = ${var.aws_region}" >> /home/ubuntu/.aws/config
     chown -R ubuntu:ubuntu /home/ubuntu/.aws
 
-    # Crear directorio de aplicación
+    # Crear directorio de aplicacion
     mkdir -p /home/ubuntu/appgestion
     chown -R ubuntu:ubuntu /home/ubuntu/appgestion
     
@@ -667,7 +667,7 @@ resource "aws_launch_template" "product_service" {
     echo "Obteniendo secretos de base de datos..."
     SECRET_JSON=$(aws secretsmanager get-secret-value --secret-id ${aws_secretsmanager_secret.db_credentials.name} --region ${var.aws_region} --query SecretString --output text)
     
-    # Extraer valores con validación y mensaje detallado
+    # Extraer valores con validacion y mensaje detallado
     DB_HOST=$(echo $SECRET_JSON | jq -r '.host_product // empty')
     if [ -z "$DB_HOST" ]; then
       echo "ERROR: No se pudo extraer host_product del secreto"
@@ -698,16 +698,16 @@ resource "aws_launch_template" "product_service" {
       echo "Usando valor de respaldo: (contraseña oculta)"
     fi
     
-    # Probar conexión directa a PostgreSQL
-    echo "Verificando conexión directa a la base de datos..."
+    # Probar conexion directa a PostgreSQL
+    echo "Verificando conexion directa a la base de datos..."
     export PGPASSWORD="$DB_PASS"
 
     for i in {1..20}; do
       echo "Intento $i: Conectando a PostgreSQL en $DB_HOST:5432..."
       if psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "SELECT version();" > /dev/null 2>&1; then
-        echo "✅ Conexión PostgreSQL establecida exitosamente"
+        echo "✅ Conexion PostgreSQL establecida exitosamente"
         
-        # Crear tabla de productos si no existe (verificación extra)
+        # Crear tabla de productos si no existe (verificacion extra)
         echo "Verificando/creando tabla product..."
         psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "
         CREATE TABLE IF NOT EXISTS product (
@@ -721,12 +721,12 @@ resource "aws_launch_template" "product_service" {
         );"
         
         # Insertar productos de prueba para verificar
-        echo "Insertando productos de prueba desde script de inicialización..."
+        echo "Insertando productos de prueba desde script de inicializacion..."
         psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c "
         INSERT INTO product (name, description, price, stock)
         VALUES 
-          ('Producto Inicial 1', 'Descripción del producto inicial 1', 199.99, 25),
-          ('Producto Inicial 2', 'Descripción del producto inicial 2', 299.99, 10)
+          ('Producto Inicial 1', 'Descripcion del producto inicial 1', 199.99, 25),
+          ('Producto Inicial 2', 'Descripcion del producto inicial 2', 299.99, 10)
         ON CONFLICT DO NOTHING;"
         
         # Verificar que se insertaron los productos
@@ -739,7 +739,7 @@ resource "aws_launch_template" "product_service" {
       fi
       
       if [ $i -eq 20 ]; then
-        echo "❌ No se pudo conectar a PostgreSQL después de 20 intentos"
+        echo "❌ No se pudo conectar a PostgreSQL despues de 20 intentos"
       fi
     done
     
@@ -750,10 +750,10 @@ resource "aws_launch_template" "product_service" {
     DOCKER_PASS=$(echo $DOCKER_SECRET | jq -r '.password // empty')
     
     if [ -n "$DOCKER_USER" ] && [ -n "$DOCKER_PASS" ]; then
-      echo "Iniciando sesión en Docker Hub..."
+      echo "Iniciando sesion en Docker Hub..."
       echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
     else
-      echo "❌ ERROR: No se pudieron obtener credenciales válidas de Docker Hub"
+      echo "❌ ERROR: No se pudieron obtener credenciales validas de Docker Hub"
       echo "DOCKER_SECRET: $DOCKER_SECRET"
     fi
     
@@ -792,7 +792,7 @@ resource "aws_launch_template" "product_service" {
     echo "Iniciando servicio con docker-compose..."
     docker-compose up -d
     
-    echo "Esperando a que el servicio esté disponible..."
+    echo "Esperando a que el servicio este disponible..."
     sleep 10
     
     # Verificar logs y estado
@@ -802,7 +802,7 @@ resource "aws_launch_template" "product_service" {
     echo "Logs del servicio product-service:"
     docker logs product-service
     
-    echo "=== FIN CONFIGURACIÓN PRODUCT SERVICE $(date) ==="
+    echo "=== FIN CONFIGURACIoN PRODUCT SERVICE $(date) ==="
   EOF
   )
   
