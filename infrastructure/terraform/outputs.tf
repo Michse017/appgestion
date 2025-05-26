@@ -1,25 +1,25 @@
 # INFORMACIÓN DE ACCESO
-output "backend_public_ip" {
-  description = "IP pública del servidor backend"
-  value       = aws_instance.backend.public_ip
+output "user_service_dns" {
+  description = "DNS del balanceador de carga para servicio de usuarios"
+  value       = aws_lb.user_service.dns_name
 }
 
-output "ssh_connection" {
-  description = "Comando para conectarse por SSH al servidor backend"
-  value       = "ssh -i ${var.ssh_key_path} ubuntu@${aws_instance.backend.public_ip}"
+output "product_service_dns" {
+  description = "DNS del balanceador de carga para servicio de productos"
+  value       = aws_lb.product_service.dns_name
 }
 
 # INFORMACIÓN DE BASES DE DATOS
 output "user_db_endpoint" {
   description = "Endpoint de la base de datos de usuarios"
   value       = aws_db_instance.user_db.endpoint
-  sensitive   = true
+  sensitive   = false
 }
 
 output "product_db_endpoint" {
   description = "Endpoint de la base de datos de productos"
   value       = aws_db_instance.product_db.endpoint
-  sensitive   = true
+  sensitive   = false
 }
 
 # INFORMACIÓN DE FRONTEND
@@ -33,24 +33,19 @@ output "frontend_cloudfront_domain" {
   value       = aws_cloudfront_distribution.frontend.domain_name
 }
 
-output "frontend_url" {
-  description = "URL completa del frontend"
-  value       = "https://${aws_cloudfront_distribution.frontend.domain_name}"
-}
-
 # INFORMACIÓN DE API
 output "api_gateway_invoke_url" {
   description = "URL de invocación de API Gateway"
   value       = "${aws_api_gateway_deployment.main.invoke_url}"
 }
 
-output "api_user_endpoint" {
-  description = "Endpoint del servicio de usuarios"
+output "api_gateway_users_url" {
+  description = "URL completa para el endpoint de usuarios"
   value       = "${aws_api_gateway_deployment.main.invoke_url}users"
 }
 
-output "api_product_endpoint" {
-  description = "Endpoint del servicio de productos"
+output "api_gateway_products_url" {
+  description = "URL completa para el endpoint de productos"
   value       = "${aws_api_gateway_deployment.main.invoke_url}products"
 }
 
@@ -63,4 +58,14 @@ output "db_secret_name" {
 output "docker_secret_name" {
   description = "Nombre del secreto de Docker en AWS Secrets Manager"
   value       = aws_secretsmanager_secret.docker_credentials.name
+}
+
+output "db_name_user" {
+  description = "Nombre de la base de datos de usuarios"
+  value       = var.db_name_user
+}
+
+output "db_name_product" {
+  description = "Nombre de la base de datos de productos"
+  value       = var.db_name_product
 }
