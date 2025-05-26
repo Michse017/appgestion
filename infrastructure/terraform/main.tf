@@ -8,6 +8,22 @@ terraform {
   }
 }
 
+# Buscar la AMI de Ubuntu más reciente
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical (fabricante de Ubuntu)
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 provider "aws" {
   region = var.aws_region
 }
@@ -84,7 +100,7 @@ resource "aws_route_table_association" "public" {
 # Grupo para instancia backend
 resource "aws_security_group" "backend" {
   name        = "${var.project_name}-backend-sg"
-  description = "Permite tráfico necesario para la instancia backend"
+  description = "Permite trafico necesario para la instancia backend"
   vpc_id      = aws_vpc.main.id
   
   # SSH - solo desde IP específica
@@ -134,11 +150,19 @@ resource "aws_security_group" "rds" {
   vpc_id      = aws_vpc.main.id
   
   ingress {
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_ssh_ip]
+    description = "PostgreSQL desde IP administrador (temporal)"
+  }
+
+  ingress {
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
     security_groups = [aws_security_group.backend.id]
-    description     = "PostgreSQL desde backend"
+    description     = "PostgreSQL desde instancia backend"
   }
   
   egress {
@@ -313,7 +337,7 @@ resource "aws_eip" "backend" {
 
 # INSTANCIA EC2 CONSOLIDADA (BACKEND)
 resource "aws_instance" "backend" {
-  ami                    = var.ec2_ami
+  ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   key_name               = var.ssh_key_name
   subnet_id              = aws_subnet.public[0].id
@@ -571,7 +595,7 @@ resource "aws_api_gateway_integration_response" "users_options" {
   http_method = aws_api_gateway_method.users_options.http_method
   status_code = 200
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS'",
     "method.response.header.Access-Control-Allow-Origin"  = "'*'"
   }
@@ -584,7 +608,7 @@ resource "aws_api_gateway_integration_response" "products_options" {
   http_method = aws_api_gateway_method.products_options.http_method
   status_code = 200
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token'",
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,Authorization,X-Amz-Date,X-Api-Key,X-Amz-Security-Token,X-Requested-With'",
     "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS'",
     "method.response.header.Access-Control-Allow-Origin"  = "'*'"
   }

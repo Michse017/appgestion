@@ -14,6 +14,10 @@ SCRIPT_DIR=$(dirname "$0")
 cd "$SCRIPT_DIR/.." || exit 1
 PROJECT_ROOT=$(pwd)
 
+# Definir ruta absoluta al archivo terraform.tfvars para mantener consistencia
+TFVARS_PATH="$PROJECT_ROOT/infrastructure/terraform/terraform.tfvars"
+TERRAFORM_DIR="$PROJECT_ROOT/infrastructure/terraform"
+
 # Detectar IP pública para configuración de seguridad
 export MY_PUBLIC_IP=$(curl -s https://api.ipify.org)
 echo -e "${YELLOW}IP pública detectada: ${MY_PUBLIC_IP}${NC}"
@@ -41,7 +45,7 @@ for dir in "frontend" "user-service" "product-service"; do
 done
 
 # Verificar archivo de variables Terraform
-if [ ! -f "infrastructure/terraform/terraform.tfvars" ]; then
+if [ ! -f "$TFVARS_PATH" ]; then
   echo -e "${RED}Error: No se encontró el archivo terraform.tfvars${NC}"
   exit 1
 else
@@ -52,7 +56,7 @@ else
                "ssh_key_path" "dockerhub_username" "dockerhub_password")
                
   for var in "${required_vars[@]}"; do
-    if ! grep -q "$var" "infrastructure/terraform/terraform.tfvars"; then
+    if ! grep -q "$var" "$TFVARS_PATH"; then
       echo -e "${RED}Error: Variable '$var' no encontrada en terraform.tfvars${NC}"
       exit 1
     fi
@@ -62,13 +66,13 @@ else
 fi
 
 # Obtener y verificar SSH key
-SSH_KEY_PATH=$(grep -oP 'ssh_key_path\s*=\s*"\K[^"]*' infrastructure/terraform/terraform.tfvars)
-SSH_KEY_NAME=$(grep -oP 'ssh_key_name\s*=\s*"\K[^"]*' infrastructure/terraform/terraform.tfvars 2>/dev/null || echo "")
+SSH_KEY_PATH=$(grep -oP 'ssh_key_path\s*=\s*"\K[^"]*' "$TFVARS_PATH")
+SSH_KEY_NAME=$(grep -oP 'ssh_key_name\s*=\s*"\K[^"]*' "$TFVARS_PATH" 2>/dev/null || echo "")
 
 if [ -z "$SSH_KEY_NAME" ] && [ -n "$SSH_KEY_PATH" ]; then
   SSH_KEY_NAME=$(basename "$SSH_KEY_PATH" | sed 's/\.[^.]*$//')
   echo -e "${YELLOW}⚠️ ssh_key_name no especificado, usando: $SSH_KEY_NAME${NC}"
-  echo "ssh_key_name = \"$SSH_KEY_NAME\"" >> infrastructure/terraform/terraform.tfvars
+  echo "ssh_key_name = \"$SSH_KEY_NAME\"" >> "$TFVARS_PATH"
 fi
 
 if [ ! -f "$SSH_KEY_PATH" ]; then
@@ -101,7 +105,7 @@ fi
 
 # Desplegar con Terraform
 echo -e "${GREEN}=== Desplegando infraestructura con Terraform ===${NC}"
-cd infrastructure/terraform
+cd "$TERRAFORM_DIR"
 
 # Agregar variable allowed_ssh_ip si se detectó correctamente
 if [ -n "$MY_PUBLIC_IP" ]; then
@@ -130,15 +134,25 @@ FRONTEND_URL=$(terraform output -raw frontend_cloudfront_domain)
 API_URL=$(terraform output -raw api_gateway_invoke_url)
 BACKEND_IP=$(terraform output -raw backend_public_ip)
 S3_BUCKET=$(terraform output -raw frontend_bucket_name)
-DOCKERHUB_USER=$(grep dockerhub_username infrastructure/terraform/terraform.tfvars | cut -d '"' -f2)
+DOCKERHUB_USER=$(grep -oP 'dockerhub_username\s*=\s*"\K[^"]*' "$TFVARS_PATH")
 
 # Actualizar config del frontend con la URL real de API Gateway
 echo -e "${GREEN}=== Actualizando configuración del frontend con URL de API Gateway ===${NC}"
 cd "$PROJECT_ROOT/frontend"
+
+# Asegurarse de que la URL termina con /
+if [[ "$API_URL" != */ ]]; then
+  API_URL="${API_URL}/"
+fi
+
 cat > .env.production << EOF
 REACT_APP_API_URL=${API_URL}
 NODE_ENV=production
 EOF
+
+# Imprimir para verificación
+echo -e "${YELLOW}Configuración frontend generada:${NC}"
+cat .env.production
 
 # Reconstruir frontend con la URL de API Gateway
 echo -e "${YELLOW}Reconstruyendo frontend con la URL real de API Gateway...${NC}"
@@ -163,11 +177,23 @@ fi
 echo -e "${GREEN}=== Configurando servicios en la instancia backend ===${NC}"
 echo -e "${YELLOW}Creando archivo docker-compose.yml en la instancia...${NC}"
 
-# Esperar un poco para asegurar que la instancia esté lista
-echo -e "${YELLOW}Esperando que la instancia esté lista (30s)...${NC}"
-sleep 30
+# Esperar más tiempo para asegurar que la instancia esté completamente inicializada
+echo -e "${YELLOW}Esperando que la instancia esté completamente lista (5min)...${NC}"
+sleep 300
+
+# Crear directorio de la aplicación en la instancia (puede que ya exista del user_data)
+echo -e "${YELLOW}Creando directorio de la aplicación en la instancia...${NC}"
+ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ConnectionAttempts=5 ubuntu@$BACKEND_IP "mkdir -p ~/appgestion" || {
+  echo -e "${YELLOW}⚠️ Esperando 60 segundos adicionales para asegurar que la instancia esté lista...${NC}"
+  sleep 60
+  ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ConnectionAttempts=5 ubuntu@$BACKEND_IP "mkdir -p ~/appgestion" || {
+    echo -e "${RED}Error: No se pudo conectar a la instancia después de esperar. Verifique el grupo de seguridad y la inicialización.${NC}"
+    exit 1
+  }
+}
 
 # Crear docker-compose.yml y enviarlo a la instancia
+cd "$PROJECT_ROOT"
 cat > docker-compose.yml << EOF
 version: '3.8'
 
@@ -180,12 +206,12 @@ services:
     image: ${DOCKERHUB_USER}/appgestion-user-service:latest
     container_name: user-service
     environment:
-      - POSTGRES_HOST=$(terraform output -raw user_db_endpoint | cut -d ':' -f 1)
-      - POSTGRES_DB=$(terraform output -raw db_name_user)
-      - POSTGRES_USER=$(grep db_username infrastructure/terraform/terraform.tfvars | cut -d '"' -f2)
-      - POSTGRES_PASSWORD=$(grep db_password infrastructure/terraform/terraform.tfvars | cut -d '"' -f2)
+      - POSTGRES_HOST=$(cd "$TERRAFORM_DIR" && terraform output -raw user_db_endpoint | cut -d ':' -f 1)
+      - POSTGRES_DB=$(cd "$TERRAFORM_DIR" && terraform output -raw db_name_user)
+      - POSTGRES_USER=$(grep -oP 'db_username\s*=\s*"\K[^"]*' "$TFVARS_PATH")
+      - POSTGRES_PASSWORD=$(grep -oP 'db_password\s*=\s*"\K[^"]*' "$TFVARS_PATH")
       - POSTGRES_PORT=5432
-      - CORS_ALLOWED_ORIGINS=https://${FRONTEND_URL}
+      - CORS_ALLOWED_ORIGINS=https://${FRONTEND_URL},${API_URL}
       - SERVICE_URL=http://localhost:3001
       - API_GATEWAY_URL=${API_URL}
     ports:
@@ -198,12 +224,12 @@ services:
     image: ${DOCKERHUB_USER}/appgestion-product-service:latest
     container_name: product-service
     environment:
-      - POSTGRES_HOST=$(terraform output -raw product_db_endpoint | cut -d ':' -f 1)
-      - POSTGRES_DB=$(terraform output -raw db_name_product)
-      - POSTGRES_USER=$(grep db_username infrastructure/terraform/terraform.tfvars | cut -d '"' -f2)
-      - POSTGRES_PASSWORD=$(grep db_password infrastructure/terraform/terraform.tfvars | cut -d '"' -f2)
+      - POSTGRES_HOST=$(cd "$TERRAFORM_DIR" && terraform output -raw product_db_endpoint | cut -d ':' -f 1)
+      - POSTGRES_DB=$(cd "$TERRAFORM_DIR" && terraform output -raw db_name_product)
+      - POSTGRES_USER=$(grep -oP 'db_username\s*=\s*"\K[^"]*' "$TFVARS_PATH")
+      - POSTGRES_PASSWORD=$(grep -oP 'db_password\s*=\s*"\K[^"]*' "$TFVARS_PATH")
       - POSTGRES_PORT=5432
-      - CORS_ALLOWED_ORIGINS=https://${FRONTEND_URL}
+      - CORS_ALLOWED_ORIGINS=https://${FRONTEND_URL},${API_URL}
       - SERVICE_URL=http://localhost:3002
       - API_GATEWAY_URL=${API_URL}
     ports:
@@ -215,14 +241,30 @@ EOF
 
 # Copiar el archivo docker-compose.yml a la instancia
 echo -e "${YELLOW}Copiando archivos a la instancia...${NC}"
-scp -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no docker-compose.yml ubuntu@$BACKEND_IP:~/appgestion/ || {
+scp -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=30 -o ConnectionAttempts=3 docker-compose.yml ubuntu@$BACKEND_IP:~/appgestion/ || {
   echo -e "${RED}Error: No se pudieron copiar los archivos a la instancia${NC}"
+  echo -e "${YELLOW}Verificando el estado de la instancia y la configuración SSH...${NC}"
+  aws ec2 describe-instances --instance-ids $(cd "$TERRAFORM_DIR" && terraform output -raw backend_instance_id 2>/dev/null || echo "unknown") --query 'Reservations[0].Instances[0].State.Name'
+  exit 1
 }
 
 # Iniciar los servicios
 echo -e "${YELLOW}Iniciando servicios en la instancia...${NC}"
-ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@$BACKEND_IP "cd ~/appgestion && docker-compose pull && docker-compose up -d" || {
+ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no -o ConnectTimeout=30 ubuntu@$BACKEND_IP "cd ~/appgestion && docker-compose pull && docker-compose up -d" || {
   echo -e "${RED}Error al iniciar los servicios en la instancia${NC}"
+  echo -e "${YELLOW}Verificando Docker en la instancia...${NC}"
+  ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@$BACKEND_IP "sudo systemctl status docker || (sudo systemctl start docker && sudo systemctl status docker)"
+  echo -e "${YELLOW}Reintentando la implementación de contenedores...${NC}"
+  ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@$BACKEND_IP "cd ~/appgestion && sudo docker-compose pull && sudo docker-compose up -d"
+}
+
+# Verificar que los servicios estén ejecutándose
+echo -e "${YELLOW}Verificando que los servicios estén en ejecución...${NC}"
+ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@$BACKEND_IP "docker ps | grep -E 'user-service|product-service'" && {
+  echo -e "${GREEN}✅ Servicios desplegados correctamente${NC}"
+} || {
+  echo -e "${RED}⚠️ Los servicios no parecen estar ejecutándose. Verificando logs:${NC}"
+  ssh -i "$SSH_KEY_PATH" -o StrictHostKeyChecking=no ubuntu@$BACKEND_IP "cd ~/appgestion && docker-compose logs --tail=20"
 }
 
 # Mostrar información de despliegue
