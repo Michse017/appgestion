@@ -196,20 +196,37 @@ else
 fi
 
 # Esperar a que los servicios estén disponibles (API Gateway puede tardar unos minutos)
-echo -e "${YELLOW}Esperando que los servicios estén disponibles (10m)...${NC}"
-sleep 600
+echo -e "${YELLOW}Esperando que los servicios estén disponibles (5m)...${NC}"
+sleep 300
 
 # Verificar API Gateway
 echo -e "${GREEN}=== Verificando API Gateway ===${NC}"
-echo -e "${YELLOW}Probando endpoint de usuarios...${NC}"
-USER_HEALTH=$(curl -s "${API_URL}users/health")
-if [[ "$USER_HEALTH" == *'"status":"healthy"'* ]]; then
-  echo -e "${GREEN}✅ API Gateway conectado con servicio de usuarios${NC}"
-else
-  echo -e "${RED}❌ Error al acceder al servicio de usuarios: $USER_HEALTH${NC}"
-  echo -e "${YELLOW}Verificando logs de la instancia...${NC}"
-  # Este paso es opcional, requiere configuración adicional
-fi
+
+# Función para intentar verificar la salud varias veces
+check_health_endpoint() {
+  local endpoint=$1
+  local name=$2
+  local max_attempts=10
+  local wait_time=30
+  
+  echo -e "${YELLOW}Probando endpoint de $name...${NC}"
+  
+  for ((i=1; i<=max_attempts; i++)); do
+    HEALTH=$(curl -s "${endpoint}")
+    echo -e "${YELLOW}Intento $i/$max_attempts: $HEALTH${NC}"
+    
+    if [[ "$HEALTH" == *'"status":"healthy"'* ]]; then
+      echo -e "${GREEN}✅ API Gateway conectado con servicio de $name${NC}"
+      return 0
+    else
+      echo -e "${YELLOW}Servicio de $name aún no disponible, esperando...${NC}"
+      sleep $wait_time
+    fi
+  done
+  
+  echo -e "${RED}❌ Error al acceder al servicio de $name después de $max_attempts intentos.${NC}"
+  return 1
+}
 
 echo -e "${YELLOW}Probando endpoint de productos...${NC}"
 PRODUCT_HEALTH=$(curl -s "${API_URL}products/health")

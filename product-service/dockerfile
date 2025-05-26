@@ -10,7 +10,6 @@ RUN pip install --no-cache-dir -r requirements.txt && \
 # Copiado del código
 COPY app.py .
 
-# Variables de entorno
 ENV POSTGRES_USER=dbadmin \
     POSTGRES_PASSWORD=placeholder_password \
     POSTGRES_HOST=localhost \

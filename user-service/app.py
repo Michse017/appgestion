@@ -28,12 +28,20 @@ db_host = os.environ.get("POSTGRES_HOST", "localhost")
 db_port = os.environ.get("POSTGRES_PORT", "5432")
 db_name = os.environ.get("POSTGRES_DB", "user_db")
 
-app.config['SQLALCHEMY_DATABASE_URI'] = f'postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
+# Forzar conexión TCP/IP explícitamente
+connection_string = f'postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}'
+logger.info(f"Intentando conectar a: {db_host}:{db_port}/{db_name}")
+app.config['SQLALCHEMY_DATABASE_URI'] = connection_string
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
-    'pool_pre_ping': True,  # Verificar conexiones antes de usarlas
-    'pool_recycle': 1800,    # Reciclar conexiones cada 30 minutos
-    'pool_timeout': 30       # Timeout de conexión en segundos
+    'pool_pre_ping': True,
+    'pool_recycle': 1800,
+    'pool_timeout': 30,
+    'connect_args': {
+        'host': db_host,  # Forzar el host explícitamente
+        'port': int(db_port),  # Forzar el puerto explícitamente
+        'application_name': 'user-service'  # Ayuda con la identificación de conexiones
+    }
 }
 
 db = SQLAlchemy(app)
