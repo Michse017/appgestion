@@ -31,7 +31,7 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
-# Subnet pública para servicios accesibles
+# Subnet publica para servicios accesibles
 resource "aws_subnet" "public" {
   count                   = length(var.availability_zones)
   vpc_id                  = aws_vpc.main.id
@@ -77,13 +77,13 @@ resource "aws_route_table_association" "public" {
 }
 
 # SECURITY GROUPS SIMPLIFICADOS
-# SG para servicios - permitir tráfico web y SSH para administración
+# SG para servicios - permitir trafico web y SSH para administracion
 resource "aws_security_group" "services" {
   name        = "${var.project_name}-services-sg"
-  description = "Permite tráfico web y SSH para los servicios"
+  description = "Permite trafico web y SSH para los servicios"
   vpc_id      = aws_vpc.main.id
   
-  # SSH - solo desde IP específica
+  # SSH - solo desde IP especifica
   ingress {
     from_port   = 22
     to_port     = 22
@@ -230,7 +230,7 @@ resource "aws_db_instance" "product_db" {
 }
 
 # INSTANCIAS EC2 CORREGIDAS
-# AMI de Ubuntu más reciente
+# AMI de Ubuntu mas reciente
 data "aws_ami" "ubuntu" {
   most_recent = true
   owners      = ["099720109477"] # Canonical (Ubuntu)
@@ -282,7 +282,7 @@ resource "aws_instance" "user_service" {
     #!/bin/bash
     set -e
     
-    echo "INICIANDO CONFIGURACIÓN DE USER-SERVICE..."
+    echo "INICIANDO CONFIGURACIoN DE USER-SERVICE..."
     
     # Instalar Docker y herramientas
     apt-get update && apt-get install -y docker.io awscli curl postgresql-client jq
@@ -304,30 +304,30 @@ resource "aws_instance" "user_service" {
     source /etc/environment
     set +a
     
-    echo "VERIFICANDO CONEXIÓN A LA BASE DE DATOS..."
-    # Verificar conexión a la base de datos antes de iniciar el contenedor
+    echo "VERIFICANDO CONEXIoN A LA BASE DE DATOS..."
+    # Verificar conexion a la base de datos antes de iniciar el contenedor
     max_attempts=30
     attempt=1
     while [ $attempt -le $max_attempts ]
     do
       echo "Intento $attempt/$max_attempts: Conectando a PostgreSQL en $POSTGRES_HOST:$POSTGRES_PORT..."
       if PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT 1" > /dev/null 2>&1; then
-        echo "✅ Conexión a PostgreSQL exitosa!"
+        echo "✅ Conexion a PostgreSQL exitosa!"
         break
       fi
       
-      echo "Conexión fallida. Reintentando en 10 segundos..."
+      echo "Conexion fallida. Reintentando en 10 segundos..."
       sleep 10
       attempt=$((attempt+1))
     done
     
     if [ $attempt -gt $max_attempts ]; then
-      echo "❌ No se pudo conectar a la base de datos después de $max_attempts intentos"
+      echo "❌ No se pudo conectar a la base de datos despues de $max_attempts intentos"
       exit 1
     fi
     
     echo "INICIANDO CONTENEDOR USER-SERVICE..."
-    # Ejecutar contenedor con parámetros corregidos
+    # Ejecutar contenedor con parametros corregidos
     docker pull ${var.dockerhub_username}/appgestion-user-service:latest
     docker run -d --name user-service \
       --restart always \
@@ -336,7 +336,7 @@ resource "aws_instance" "user_service" {
       ${var.dockerhub_username}/appgestion-user-service:latest
     
     echo "VERIFICANDO DISPONIBILIDAD DEL SERVICIO..."
-    # Verificar que el servicio esté disponible
+    # Verificar que el servicio este disponible
     attempt=1
     max_attempts=30
     while [ $attempt -le $max_attempts ]
@@ -347,19 +347,19 @@ resource "aws_instance" "user_service" {
         break
       fi
       
-      echo "Servicio no disponible aún. Reintentando en 10 segundos..."
+      echo "Servicio no disponible aun. Reintentando en 10 segundos..."
       sleep 10
       attempt=$((attempt+1))
     done
     
     if [ $attempt -gt $max_attempts ]; then
-      echo "❌ No se pudo verificar el servicio después de $max_attempts intentos"
-      # Mostrar logs del contenedor para diagnóstico
+      echo "❌ No se pudo verificar el servicio despues de $max_attempts intentos"
+      # Mostrar logs del contenedor para diagnostico
       docker logs user-service
       exit 1
     fi
     
-    echo "✅ CONFIGURACIÓN DE USER-SERVICE COMPLETADA EXITOSAMENTE"
+    echo "✅ CONFIGURACIoN DE USER-SERVICE COMPLETADA EXITOSAMENTE"
   EOF
   
   tags = {
@@ -382,7 +382,7 @@ resource "aws_instance" "product_service" {
     #!/bin/bash
     set -e
     
-    echo "INICIANDO CONFIGURACIÓN DE PRODUCT-SERVICE..."
+    echo "INICIANDO CONFIGURACIoN DE PRODUCT-SERVICE..."
     
     # Instalar Docker y herramientas
     apt-get update && apt-get install -y docker.io awscli curl postgresql-client jq
@@ -404,30 +404,30 @@ resource "aws_instance" "product_service" {
     source /etc/environment
     set +a
     
-    echo "VERIFICANDO CONEXIÓN A LA BASE DE DATOS..."
-    # Verificar conexión a la base de datos antes de iniciar el contenedor
+    echo "VERIFICANDO CONEXIoN A LA BASE DE DATOS..."
+    # Verificar conexion a la base de datos antes de iniciar el contenedor
     max_attempts=30
     attempt=1
     while [ $attempt -le $max_attempts ]
     do
       echo "Intento $attempt/$max_attempts: Conectando a PostgreSQL en $POSTGRES_HOST:$POSTGRES_PORT..."
       if PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT 1" > /dev/null 2>&1; then
-        echo "✅ Conexión a PostgreSQL exitosa!"
+        echo "✅ Conexion a PostgreSQL exitosa!"
         break
       fi
       
-      echo "Conexión fallida. Reintentando en 10 segundos..."
+      echo "Conexion fallida. Reintentando en 10 segundos..."
       sleep 10
       attempt=$((attempt+1))
     done
     
     if [ $attempt -gt $max_attempts ]; then
-      echo "❌ No se pudo conectar a la base de datos después de $max_attempts intentos"
+      echo "❌ No se pudo conectar a la base de datos despues de $max_attempts intentos"
       exit 1
     fi
     
     echo "INICIANDO CONTENEDOR PRODUCT-SERVICE..."
-    # Ejecutar contenedor con parámetros corregidos
+    # Ejecutar contenedor con parametros corregidos
     docker pull ${var.dockerhub_username}/appgestion-product-service:latest
     docker run -d --name product-service \
       --restart always \
@@ -436,7 +436,7 @@ resource "aws_instance" "product_service" {
       ${var.dockerhub_username}/appgestion-product-service:latest
     
     echo "VERIFICANDO DISPONIBILIDAD DEL SERVICIO..."
-    # Verificar que el servicio esté disponible
+    # Verificar que el servicio este disponible
     attempt=1
     max_attempts=30
     while [ $attempt -le $max_attempts ]
@@ -447,19 +447,19 @@ resource "aws_instance" "product_service" {
         break
       fi
       
-      echo "Servicio no disponible aún. Reintentando en 10 segundos..."
+      echo "Servicio no disponible aun. Reintentando en 10 segundos..."
       sleep 10
       attempt=$((attempt+1))
     done
     
     if [ $attempt -gt $max_attempts ]; then
-      echo "❌ No se pudo verificar el servicio después de $max_attempts intentos"
-      # Mostrar logs del contenedor para diagnóstico
+      echo "❌ No se pudo verificar el servicio despues de $max_attempts intentos"
+      # Mostrar logs del contenedor para diagnostico
       docker logs product-service
       exit 1
     fi
     
-    echo "✅ CONFIGURACIÓN DE PRODUCT-SERVICE COMPLETADA EXITOSAMENTE"
+    echo "✅ CONFIGURACIoN DE PRODUCT-SERVICE COMPLETADA EXITOSAMENTE"
   EOF
   
   tags = {
@@ -701,7 +701,7 @@ resource "aws_api_gateway_rest_api" "main" {
   }
 }
 
-# CONFIGURACIÓN DE CORS PARA API GATEWAY
+# CONFIGURACIoN DE CORS PARA API GATEWAY
 resource "aws_api_gateway_resource" "users" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_rest_api.main.root_resource_id
@@ -731,7 +731,7 @@ resource "aws_api_gateway_integration" "users_any" {
   uri                     = "http://${aws_lb.user_service.dns_name}/users"
   integration_http_method = "ANY"
   
-  # No necesitamos VPC Link con ALBs públicos
+  # No necesitamos VPC Link con ALBs publicos
   connection_type = "INTERNET"
 }
 
@@ -798,7 +798,7 @@ resource "aws_api_gateway_integration" "products_any" {
   uri                     = "http://${aws_lb.product_service.dns_name}/products"
   integration_http_method = "ANY"
   
-  # No necesitamos VPC Link con ALBs públicos
+  # No necesitamos VPC Link con ALBs publicos
   connection_type = "INTERNET"
 }
 
@@ -875,7 +875,7 @@ resource "aws_api_gateway_integration" "users_proxy_any" {
   uri                     = "http://${aws_lb.user_service.dns_name}/users/{proxy}"
   integration_http_method = "ANY"
   
-  # No necesitamos VPC Link con ALBs públicos
+  # No necesitamos VPC Link con ALBs publicos
   connection_type = "INTERNET"
   
   request_parameters = {
@@ -909,7 +909,7 @@ resource "aws_api_gateway_integration" "products_proxy_any" {
   uri                     = "http://${aws_lb.product_service.dns_name}/products/{proxy}"
   integration_http_method = "ANY"
   
-  # No necesitamos VPC Link con ALBs públicos
+  # No necesitamos VPC Link con ALBs publicos
   connection_type = "INTERNET"
   
   request_parameters = {
