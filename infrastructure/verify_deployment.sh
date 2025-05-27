@@ -9,14 +9,28 @@ NC='\033[0m'
 
 echo -e "${YELLOW}=== Verificando despliegue de AppGestion ===${NC}"
 
-# Obtener outputs de Terraform
-cd infrastructure/terraform
-API_URL=$(terraform output -raw api_gateway_invoke_url)
-FRONTEND_URL=$(terraform output -raw frontend_cloudfront_domain)
-USER_ALB=$(terraform output -raw user_service_endpoint)
-PRODUCT_ALB=$(terraform output -raw product_service_endpoint)
-USER_DB=$(terraform output -raw user_db_endpoint)
-PRODUCT_DB=$(terraform output -raw product_db_endpoint)
+# CORRECCIÓN: Ubicar el directorio de Terraform de forma más robusta
+SCRIPT_DIR=$(dirname "$(realpath "$0")")
+TERRAFORM_DIR="${SCRIPT_DIR}/terraform"
+
+if [ ! -d "$TERRAFORM_DIR" ]; then
+  echo -e "${RED}Error: Directorio de Terraform no encontrado: $TERRAFORM_DIR${NC}"
+  echo -e "${RED}Directorio actual: $(pwd)${NC}"
+  exit 1
+fi
+
+# Cambiar al directorio de Terraform
+cd "$TERRAFORM_DIR"
+echo -e "${YELLOW}Obteniendo datos de Terraform desde: $(pwd)${NC}"
+
+# Obtener outputs con manejo de errores
+API_URL=$(terraform output -raw api_gateway_invoke_url 2>/dev/null || echo "NO_DISPONIBLE")
+FRONTEND_URL=$(terraform output -raw frontend_cloudfront_domain 2>/dev/null || echo "NO_DISPONIBLE")
+USER_ALB=$(terraform output -raw user_service_endpoint 2>/dev/null || echo "NO_DISPONIBLE")
+PRODUCT_ALB=$(terraform output -raw product_service_endpoint 2>/dev/null || echo "NO_DISPONIBLE")
+USER_DB=$(terraform output -raw user_db_endpoint 2>/dev/null || echo "NO_DISPONIBLE")
+PRODUCT_DB=$(terraform output -raw product_db_endpoint 2>/dev/null || echo "NO_DISPONIBLE")
+
 
 echo -e "${YELLOW}Verificando bases de datos...${NC}"
 # Obtener credenciales de BD de terraform.tfvars
@@ -49,5 +63,20 @@ curl -v ${API_URL}products/health || echo -e "${RED}Error accediendo a la API de
 
 echo -e "${YELLOW}Probando Frontend URL...${NC}"
 curl -I https://$FRONTEND_URL || echo -e "${RED}Error accediendo al Frontend${NC}"
+
+echo -e "${YELLOW}Verificando funcionalidad de APIs...${NC}"
+# Intentar crear un usuario de prueba
+echo "Intentando crear un usuario de prueba..."
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test User", "email":"test@example.com", "password":"testpass"}' \
+  "${API_URL}users" || echo -e "${RED}Error creando usuario de prueba${NC}"
+
+# Intentar crear un producto de prueba
+echo "Intentando crear un producto de prueba..."
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test Product", "description":"Test Description", "price":99.99}' \
+  "${API_URL}products" || echo -e "${RED}Error creando producto de prueba${NC}"
 
 echo -e "${GREEN}=== Verificación completa ===${NC}"

@@ -38,8 +38,16 @@ if ! aws ec2 describe-key-pairs --key-name "$SSH_KEY_NAME" &>/dev/null; then
   exit 1
 fi
 
-# Validar que las imágenes Docker existen si no se van a reconstruir
-if [[ "$response" =~ ^([nN][oO]|[nN])$ ]]; then
+# AQUÍ ESTÁ LA CORRECCIÓN - Preguntar explícitamente si quiere construir imágenes
+echo -e "${YELLOW}¿Desea construir y publicar imágenes Docker? (s/n)${NC}"
+read -r response
+
+if [[ "$response" =~ ^([sS][iI]|[sS])$ ]]; then
+  # Si la respuesta es sí, construir imágenes
+  echo -e "${YELLOW}Construyendo y publicando imágenes Docker...${NC}"
+  bash "$PROJECT_ROOT/infrastructure/build_images.sh" || exit 1
+else
+  # Si la respuesta es no, verificar que las imágenes existen
   DOCKERHUB_USER=$(grep dockerhub_username "$TERRAFORM_DIR/terraform.tfvars" | cut -d '"' -f2)
   for service in "user-service" "product-service"; do
     if ! docker pull "${DOCKERHUB_USER}/appgestion-${service}:latest" &>/dev/null; then
@@ -51,6 +59,7 @@ if [[ "$response" =~ ^([nN][oO]|[nN])$ ]]; then
       else
         exit 1
       fi
+      break  # Salir del loop si ya se construyeron las imágenes
     fi
   done
 fi
@@ -58,7 +67,13 @@ fi
 # Ejecutar Terraform
 cd "$TERRAFORM_DIR"
 echo -e "${YELLOW}Agregando IP para acceso remoto seguro: $MY_PUBLIC_IP${NC}"
-echo "allowed_ssh_ip = \"$MY_PUBLIC_IP/32\"" >> terraform.tfvars
+if grep -q "allowed_ssh_ip" terraform.tfvars; then
+  # Actualizar la línea existente
+  sed -i "s/allowed_ssh_ip = .*/allowed_ssh_ip = \"$MY_PUBLIC_IP\/32\"/" terraform.tfvars
+else
+  # Añadir nueva línea
+  echo "allowed_ssh_ip = \"$MY_PUBLIC_IP/32\"" >> terraform.tfvars
+fi
 
 echo -e "${YELLOW}Inicializando y desplegando infraestructura...${NC}"
 terraform init
@@ -84,13 +99,31 @@ if [ -n "$DISTRIBUTION_ID" ]; then
   aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
 fi
 
+# CORRECCIÓN: Volver al directorio raíz antes de verificar
+cd "$PROJECT_ROOT"
+
 # Añadir espera para verificación después del despliegue
 echo -e "${YELLOW}Esperando 5 minutos para que los recursos se inicialicen...${NC}"
 sleep 300
 
-# Ejecutar script de verificación
+# Ejecutar script de verificación con manejo de errores
 echo -e "${YELLOW}Verificando despliegue...${NC}"
-bash "$PROJECT_ROOT/infrastructure/verify_deployment.sh"
+if [ ! -f "$PROJECT_ROOT/infrastructure/verify_deployment.sh" ]; then
+  echo -e "${RED}Error: Script de verificación no encontrado${NC}"
+  echo -e "${RED}Ruta buscada: $PROJECT_ROOT/infrastructure/verify_deployment.sh${NC}"
+  echo -e "${RED}Directorio actual: $(pwd)${NC}"
+  exit 1
+fi
+
+# Verificar permisos de ejecución
+chmod +x "$PROJECT_ROOT/infrastructure/verify_deployment.sh"
+
+# Ejecutar con path absoluto y debugging
+echo -e "${YELLOW}Ejecutando: $PROJECT_ROOT/infrastructure/verify_deployment.sh${NC}"
+bash "$PROJECT_ROOT/infrastructure/verify_deployment.sh" || {
+  echo -e "${RED}Error ejecutando script de verificación${NC}"
+  # Continuar a pesar del error para mostrar la información de acceso
+}
 
 # Mostrar información de acceso
 echo -e "${GREEN}=== Despliegue completado ===${NC}"

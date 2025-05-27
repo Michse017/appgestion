@@ -266,131 +266,131 @@ resource "aws_instance" "user_service" {
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   
   user_data = <<-EOF
-    #!/bin/bash
-    # Mejora para user_service (hacer lo mismo para product_service)
-    set -e
-    exec > >(tee /var/log/user-data.log) 2>&1
+#!/bin/bash
+# Mejora para user_service
+set -e
+exec > >(tee /var/log/user-data.log) 2>&1
 
-    echo "INICIANDO CONFIGURACIoN DE USER-SERVICE..."
-    apt-get update && apt-get install -y docker.io awscli curl postgresql-client jq
+echo "INICIANDO CONFIGURACION DE USER-SERVICE..."
+apt-get update && apt-get install -y docker.io awscli curl postgresql-client jq
 
-    # Crear variables de entorno con valores correctos
-    cat > /etc/environment <<EOL
-    POSTGRES_HOST=${aws_db_instance.user_db.address}
-    POSTGRES_USER=${var.db_username}
-    POSTGRES_PASSWORD=${var.db_password}
-    POSTGRES_DB=${var.db_name_user}
-    POSTGRES_PORT=5432
-    DB_MAX_RETRIES=120  # Aumentar para dar mas tiempo
-    DB_RETRY_INTERVAL=5
-    EOL
+# Crear variables de entorno con valores correctos
+cat > /etc/environment <<EOL
+POSTGRES_HOST=${aws_db_instance.user_db.address}
+POSTGRES_USER=${var.db_username}
+POSTGRES_PASSWORD=${var.db_password}
+POSTGRES_DB=${var.db_name_user}
+POSTGRES_PORT=5432
+DB_MAX_RETRIES=120  # Aumentar para dar mas tiempo
+DB_RETRY_INTERVAL=5
+EOL
 
-    # Exportar variables para este script
-    set -a
-    source /etc/environment
-    set +a
+# Exportar variables para este script
+set -a
+source /etc/environment
+set +a
 
-    # Verificar PostgreSQL con reintento extendido
-    echo "VERIFICANDO CONEXIoN A POSTGRESQL..."
-    max_attempts=60  # 10 minutos
-    attempt=1
-    while [ $attempt -le $max_attempts ]; do
-      echo "Intento $attempt/$max_attempts: Conectando a PostgreSQL..."
-      if PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT 1" > /dev/null 2>&1; then
-        echo "✅ Conexion a PostgreSQL exitosa"
-        # Crear tablas iniciales si es necesario
-        PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
-          CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(100) NOT NULL,
-            email VARCHAR(100) UNIQUE NOT NULL,
-            password_hash VARCHAR(256) NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-          );"
-        break
-      fi
-      echo "Conexion fallida. Reintentando en 10 segundos..."
-      sleep 10
-      attempt=$((attempt+1))
-    done
+# Verificar PostgreSQL con reintento extendido
+echo "VERIFICANDO CONEXION A POSTGRESQL..."
+max_attempts=60  # 10 minutos
+attempt=1
+while [ $attempt -le $max_attempts ]; do
+  echo "Intento $attempt/$max_attempts: Conectando a PostgreSQL..."
+  if PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT 1" > /dev/null 2>&1; then
+    echo "✅ Conexion a PostgreSQL exitosa"
+    # Crear tablas iniciales si es necesario
+    PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        email VARCHAR(100) UNIQUE NOT NULL,
+        password_hash VARCHAR(256) NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );"
+    break
+  fi
+  echo "Conexion fallida. Reintentando en 10 segundos..."
+  sleep 10
+  attempt=$((attempt+1))
+done
 
-    if [ $attempt -gt $max_attempts ]; then
-      echo "❌ Error: No se pudo conectar a PostgreSQL despues de $max_attempts intentos"
-      exit 1
-    fi
+if [ $attempt -gt $max_attempts ]; then
+  echo "❌ Error: No se pudo conectar a PostgreSQL despues de $max_attempts intentos"
+  exit 1
+fi
 
-    # Eliminar contenedores previos si existen
-    docker rm -f user-service || true
+# Eliminar contenedores previos si existen
+docker rm -f user-service || true
 
-    # Ejecutar contenedor Docker con variables correctas
-    echo "INICIANDO CONTENEDOR DOCKER..."
-    docker pull ${var.dockerhub_username}/appgestion-user-service:latest
-    docker run -d --name user-service \
-      --restart always \
-      -p 3001:3001 \
-      -e POSTGRES_HOST=$POSTGRES_HOST \
-      -e POSTGRES_USER=$POSTGRES_USER \
-      -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-      -e POSTGRES_DB=$POSTGRES_DB \
-      -e POSTGRES_PORT=$POSTGRES_PORT \
-      -e DB_MAX_RETRIES=$DB_MAX_RETRIES \
-      -e DB_RETRY_INTERVAL=$DB_RETRY_INTERVAL \
-      ${var.dockerhub_username}/appgestion-user-service:latest
+# Ejecutar contenedor Docker con variables correctas
+echo "INICIANDO CONTENEDOR DOCKER..."
+docker pull ${var.dockerhub_username}/appgestion-user-service:latest
+docker run -d --name user-service \
+  --restart always \
+  -p 3001:3001 \
+  -e POSTGRES_HOST=$POSTGRES_HOST \
+  -e POSTGRES_USER=$POSTGRES_USER \
+  -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+  -e POSTGRES_DB=$POSTGRES_DB \
+  -e POSTGRES_PORT=$POSTGRES_PORT \
+  -e DB_MAX_RETRIES=$DB_MAX_RETRIES \
+  -e DB_RETRY_INTERVAL=$DB_RETRY_INTERVAL \
+  ${var.dockerhub_username}/appgestion-user-service:latest
 
-    # Verificar que el servicio esta disponible
-    echo "VERIFICANDO DISPONIBILIDAD DEL SERVICIO..."
-    attempt=1
-    max_attempts=30
-    while [ $attempt -le $max_attempts ]; do
-      echo "Intento $attempt/$max_attempts: Verificando servicio..."
-      if curl -s http://localhost:3001/health | grep -q "healthy"; then
-        echo "✅ Servicio disponible"
-        break
-      fi
-      
-      # Mostrar logs si hay problemas
-      if [ $attempt -eq 10 ]; then
-        echo "⚠️ Mostrando logs del contenedor para diagnostico:"
-        docker logs user-service
-      fi
-      
-      echo "Servicio no disponible. Reintentando en 10 segundos..."
-      sleep 10
-      attempt=$((attempt+1))
-    done
-
-    if [ $attempt -gt $max_attempts ]; then
-      echo "❌ Error: El servicio no esta disponible despues de $max_attempts intentos"
-      docker logs user-service
-      exit 1
-    fi
-
-    # Crear un script para diagnostico
-    cat > /home/ubuntu/diagnose.sh <<'EOL'
-    #!/bin/bash
-    echo "=== DIAGNoSTICO DEL SERVICIO ==="
-    echo "Informacion del sistema:"
-    uname -a
-    uptime
-    echo
-    echo "Docker containers:"
-    docker ps -a
-    echo
-    echo "Logs del contenedor:"
+# Verificar que el servicio esta disponible
+echo "VERIFICANDO DISPONIBILIDAD DEL SERVICIO..."
+attempt=1
+max_attempts=30
+while [ $attempt -le $max_attempts ]; do
+  echo "Intento $attempt/$max_attempts: Verificando servicio..."
+  if curl -s http://localhost:3001/health | grep -q "healthy"; then
+    echo "✅ Servicio disponible"
+    break
+  fi
+  
+  # Mostrar logs si hay problemas
+  if [ $attempt -eq 10 ]; then
+    echo "⚠️ Mostrando logs del contenedor para diagnostico:"
     docker logs user-service
-    echo
-    echo "Verificacion de salud:"
-    curl -v http://localhost:3001/health
-    echo
-    echo "Prueba de conexion a BD:"
-    source /etc/environment
-    PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM users;"
-    EOL
+  fi
+  
+  echo "Servicio no disponible. Reintentando en 10 segundos..."
+  sleep 10
+  attempt=$((attempt+1))
+done
 
-    chmod +x /home/ubuntu/diagnose.sh
-    echo "✅ CONFIGURACIoN COMPLETADA"
-  EOF
+if [ $attempt -gt $max_attempts ]; then
+  echo "❌ Error: El servicio no esta disponible despues de $max_attempts intentos"
+  docker logs user-service
+  exit 1
+fi
+
+# Crear un script para diagnostico
+cat > /home/ubuntu/diagnose.sh <<'EOS'
+#!/bin/bash
+echo "=== DIAGNOSTICO DEL SERVICIO ==="
+echo "Informacion del sistema:"
+uname -a
+uptime
+echo
+echo "Docker containers:"
+docker ps -a
+echo
+echo "Logs del contenedor:"
+docker logs user-service
+echo
+echo "Verificacion de salud:"
+curl -v http://localhost:3001/health
+echo
+echo "Prueba de conexion a BD:"
+source /etc/environment
+PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM users;"
+EOS
+
+chmod +x /home/ubuntu/diagnose.sh
+echo "✅ CONFIGURACION COMPLETADA"
+EOF
   
   tags = {
     Name = "${var.project_name}-user-service"
@@ -409,131 +409,132 @@ resource "aws_instance" "product_service" {
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   
   user_data = <<-EOF
-    #!/bin/bash
-    # Configuracion mejorada para product-service
-    set -e
-    exec > >(tee /var/log/user-data.log) 2>&1
+#!/bin/bash
+# Configuracion mejorada para product-service
+set -e
+exec > >(tee /var/log/user-data.log) 2>&1
 
-    echo "INICIANDO CONFIGURACIoN DE PRODUCT-SERVICE..."
-    apt-get update && apt-get install -y docker.io awscli curl postgresql-client jq
+echo "INICIANDO CONFIGURACION DE PRODUCT-SERVICE..."
+apt-get update && apt-get install -y docker.io awscli curl postgresql-client jq
 
-    # Crear variables de entorno con valores correctos
-    cat > /etc/environment <<EOL
-    POSTGRES_HOST=${aws_db_instance.product_db.address}
-    POSTGRES_USER=${var.db_username}
-    POSTGRES_PASSWORD=${var.db_password}
-    POSTGRES_DB=${var.db_name_product}
-    POSTGRES_PORT=5432
-    DB_MAX_RETRIES=120  # Aumentar para dar mas tiempo
-    DB_RETRY_INTERVAL=5
-    EOL
+# Crear variables de entorno con valores correctos
+cat > /etc/environment <<EOL
+POSTGRES_HOST=${aws_db_instance.product_db.address}
+POSTGRES_USER=${var.db_username}
+POSTGRES_PASSWORD=${var.db_password}
+POSTGRES_DB=${var.db_name_product}
+POSTGRES_PORT=5432
+DB_MAX_RETRIES=120  # Aumentar para dar mas tiempo
+DB_RETRY_INTERVAL=5
+EOL
 
-    # Exportar variables para este script
-    set -a
-    source /etc/environment
-    set +a
+# Exportar variables para este script
+set -a
+source /etc/environment
+set +a
 
-    # Verificar PostgreSQL con reintento extendido
-    echo "VERIFICANDO CONEXIoN A POSTGRESQL..."
-    max_attempts=60  # 10 minutos
-    attempt=1
-    while [ $attempt -le $max_attempts ]; do
-      echo "Intento $attempt/$max_attempts: Conectando a PostgreSQL..."
-      if PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT 1" > /dev/null 2>&1; then
-        echo "✅ Conexion a PostgreSQL exitosa"
-        # Crear tablas iniciales si es necesario
-        PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
-          CREATE TABLE IF NOT EXISTS products (
-            id SERIAL PRIMARY KEY,
-            name VARCHAR(100) NOT NULL,
-            description TEXT,
-            price DECIMAL(10,2) NOT NULL,
-            created_at TIMESTAMP DEFAULT NOW(),
-            updated_at TIMESTAMP DEFAULT NOW()
-          );"
-        break
-      fi
-      echo "Conexion fallida. Reintentando en 10 segundos..."
-      sleep 10
-      attempt=$((attempt+1))
-    done
+# Verificar PostgreSQL con reintento extendido
+echo "VERIFICANDO CONEXION A POSTGRESQL..."
+max_attempts=60  # 10 minutos
+attempt=1
+while [ $attempt -le $max_attempts ]; do
+  echo "Intento $attempt/$max_attempts: Conectando a PostgreSQL..."
+  if PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT 1" > /dev/null 2>&1; then
+    echo "✅ Conexion a PostgreSQL exitosa"
+    # Crear tablas iniciales si es necesario
+    PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
+      CREATE TABLE IF NOT EXISTS products (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        price DECIMAL(10,2) NOT NULL,
+        stock INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );"
+    break
+  fi
+  echo "Conexion fallida. Reintentando en 10 segundos..."
+  sleep 10
+  attempt=$((attempt+1))
+done
 
-    if [ $attempt -gt $max_attempts ]; then
-      echo "❌ Error: No se pudo conectar a PostgreSQL despues de $max_attempts intentos"
-      exit 1
-    fi
+if [ $attempt -gt $max_attempts ]; then
+  echo "❌ Error: No se pudo conectar a PostgreSQL despues de $max_attempts intentos"
+  exit 1
+fi
 
-    # Eliminar contenedores previos si existen
-    docker rm -f product-service || true
+# Eliminar contenedores previos si existen
+docker rm -f product-service || true
 
-    # Ejecutar contenedor Docker con variables correctas
-    echo "INICIANDO CONTENEDOR DOCKER..."
-    docker pull ${var.dockerhub_username}/appgestion-product-service:latest
-    docker run -d --name product-service \
-      --restart always \
-      -p 3002:3002 \
-      -e POSTGRES_HOST=$POSTGRES_HOST \
-      -e POSTGRES_USER=$POSTGRES_USER \
-      -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-      -e POSTGRES_DB=$POSTGRES_DB \
-      -e POSTGRES_PORT=$POSTGRES_PORT \
-      -e DB_MAX_RETRIES=$DB_MAX_RETRIES \
-      -e DB_RETRY_INTERVAL=$DB_RETRY_INTERVAL \
-      ${var.dockerhub_username}/appgestion-product-service:latest
+# Ejecutar contenedor Docker con variables correctas
+echo "INICIANDO CONTENEDOR DOCKER..."
+docker pull ${var.dockerhub_username}/appgestion-product-service:latest
+docker run -d --name product-service \
+  --restart always \
+  -p 3002:3002 \
+  -e POSTGRES_HOST=$POSTGRES_HOST \
+  -e POSTGRES_USER=$POSTGRES_USER \
+  -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
+  -e POSTGRES_DB=$POSTGRES_DB \
+  -e POSTGRES_PORT=$POSTGRES_PORT \
+  -e DB_MAX_RETRIES=$DB_MAX_RETRIES \
+  -e DB_RETRY_INTERVAL=$DB_RETRY_INTERVAL \
+  ${var.dockerhub_username}/appgestion-product-service:latest
 
-    # Verificar que el servicio esta disponible
-    echo "VERIFICANDO DISPONIBILIDAD DEL SERVICIO..."
-    attempt=1
-    max_attempts=30
-    while [ $attempt -le $max_attempts ]; do
-      echo "Intento $attempt/$max_attempts: Verificando servicio..."
-      if curl -s http://localhost:3002/health | grep -q "healthy"; then
-        echo "✅ Servicio disponible"
-        break
-      fi
-      
-      # Mostrar logs si hay problemas
-      if [ $attempt -eq 10 ]; then
-        echo "⚠️ Mostrando logs del contenedor para diagnostico:"
-        docker logs product-service
-      fi
-      
-      echo "Servicio no disponible. Reintentando en 10 segundos..."
-      sleep 10
-      attempt=$((attempt+1))
-    done
-
-    if [ $attempt -gt $max_attempts ]; then
-      echo "❌ Error: El servicio no esta disponible despues de $max_attempts intentos"
-      docker logs product-service
-      exit 1
-    fi
-
-    # Crear un script para diagnostico
-    cat > /home/ubuntu/diagnose.sh <<'EOL'
-    #!/bin/bash
-    echo "=== DIAGNoSTICO DEL SERVICIO ==="
-    echo "Informacion del sistema:"
-    uname -a
-    uptime
-    echo
-    echo "Docker containers:"
-    docker ps -a
-    echo
-    echo "Logs del contenedor:"
+# Verificar que el servicio esta disponible
+echo "VERIFICANDO DISPONIBILIDAD DEL SERVICIO..."
+attempt=1
+max_attempts=30
+while [ $attempt -le $max_attempts ]; do
+  echo "Intento $attempt/$max_attempts: Verificando servicio..."
+  if curl -s http://localhost:3002/health | grep -q "healthy"; then
+    echo "✅ Servicio disponible"
+    break
+  fi
+  
+  # Mostrar logs si hay problemas
+  if [ $attempt -eq 10 ]; then
+    echo "⚠️ Mostrando logs del contenedor para diagnostico:"
     docker logs product-service
-    echo
-    echo "Verificacion de salud:"
-    curl -v http://localhost:3002/health
-    echo
-    echo "Prueba de conexion a BD:"
-    source /etc/environment
-    PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM products;"
-    EOL
+  fi
+  
+  echo "Servicio no disponible. Reintentando en 10 segundos..."
+  sleep 10
+  attempt=$((attempt+1))
+done
 
-    chmod +x /home/ubuntu/diagnose.sh
-    echo "✅ CONFIGURACIoN COMPLETADA"
-  EOF
+if [ $attempt -gt $max_attempts ]; then
+  echo "❌ Error: El servicio no esta disponible despues de $max_attempts intentos"
+  docker logs product-service
+  exit 1
+fi
+
+# Crear un script para diagnostico
+cat > /home/ubuntu/diagnose.sh <<'EOS'
+#!/bin/bash
+echo "=== DIAGNOSTICO DEL SERVICIO ==="
+echo "Informacion del sistema:"
+uname -a
+uptime
+echo
+echo "Docker containers:"
+docker ps -a
+echo
+echo "Logs del contenedor:"
+docker logs product-service
+echo
+echo "Verificacion de salud:"
+curl -v http://localhost:3002/health
+echo
+echo "Prueba de conexion a BD:"
+source /etc/environment
+PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM products;"
+EOS
+
+chmod +x /home/ubuntu/diagnose.sh
+echo "✅ CONFIGURACION COMPLETADA"
+EOF
   
   tags = {
     Name = "${var.project_name}-product-service"
@@ -804,9 +805,8 @@ resource "aws_api_gateway_integration" "users_any" {
   uri                     = "http://${aws_lb.user_service.dns_name}/users"
   integration_http_method = "ANY"
   
-  # Connection type y timeout
-  connection_type     = "INTERNET"
-  timeout_milliseconds = 29000  # Maximo permitido (29 segundos)
+  connection_type = "INTERNET"
+  timeout_milliseconds = 29000  # 29 segundos (maximo permitido)
 }
 
 # CORS para usuarios
@@ -872,8 +872,8 @@ resource "aws_api_gateway_integration" "products_any" {
   uri                     = "http://${aws_lb.product_service.dns_name}/products"
   integration_http_method = "ANY"
   
-  # No necesitamos VPC Link con ALBs publicos
   connection_type = "INTERNET"
+  timeout_milliseconds = 29000  # 29 segundos (maximo permitido)
 }
 
 # CORS para productos
