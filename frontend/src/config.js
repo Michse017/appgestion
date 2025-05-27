@@ -1,7 +1,12 @@
-// Configuración simplificada para API Gateway
 const getApiUrl = () => {
-  // Usar variable de entorno o fallback al origen actual
-  return process.env.REACT_APP_API_URL || window.location.origin;
+  // Mostrar log para diagnóstico en todas las situaciones
+  console.log('Environment:', process.env.NODE_ENV);
+  console.log('REACT_APP_API_URL:', process.env.REACT_APP_API_URL);
+  
+  // Usar API URL configurada o fallback
+  const apiUrl = process.env.REACT_APP_API_URL || window.location.origin;
+  console.log('Using API URL:', apiUrl);
+  return apiUrl;
 };
 
 export const API_BASE_URL = getApiUrl();

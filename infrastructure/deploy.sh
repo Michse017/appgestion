@@ -24,11 +24,35 @@ for cmd in terraform aws docker npm; do
   fi
 done
 
-# Construir imágenes Docker si se solicita
-echo -e "${YELLOW}¿Construir imágenes Docker? (s/n)${NC}"
-read -r response
-if [[ "$response" =~ ^([sS][iI]|[sS])$ ]]; then
-  bash "$PROJECT_ROOT/infrastructure/build_images.sh" || exit 1
+# Verificar configuración antes de desplegar
+echo -e "${YELLOW}Verificando terraform.tfvars...${NC}"
+if ! grep -q "db_username" "$TERRAFORM_DIR/terraform.tfvars"; then
+  echo -e "${RED}Error: terraform.tfvars no está correctamente configurado${NC}"
+  exit 1
+fi
+
+# Añadir validación de variables antes de desplegar
+SSH_KEY_NAME=$(grep ssh_key_name "$TERRAFORM_DIR/terraform.tfvars" | cut -d '"' -f2)
+if ! aws ec2 describe-key-pairs --key-name "$SSH_KEY_NAME" &>/dev/null; then
+  echo -e "${RED}Error: La clave SSH '$SSH_KEY_NAME' no existe en AWS${NC}"
+  exit 1
+fi
+
+# Validar que las imágenes Docker existen si no se van a reconstruir
+if [[ "$response" =~ ^([nN][oO]|[nN])$ ]]; then
+  DOCKERHUB_USER=$(grep dockerhub_username "$TERRAFORM_DIR/terraform.tfvars" | cut -d '"' -f2)
+  for service in "user-service" "product-service"; do
+    if ! docker pull "${DOCKERHUB_USER}/appgestion-${service}:latest" &>/dev/null; then
+      echo -e "${RED}Error: La imagen ${DOCKERHUB_USER}/appgestion-${service}:latest no existe${NC}"
+      echo -e "${YELLOW}¿Desea construir las imágenes ahora? (s/n)${NC}"
+      read -r build_now
+      if [[ "$build_now" =~ ^([sS][iI]|[sS])$ ]]; then
+        bash "$PROJECT_ROOT/infrastructure/build_images.sh" || exit 1
+      else
+        exit 1
+      fi
+    fi
+  done
 fi
 
 # Ejecutar Terraform
@@ -59,6 +83,14 @@ DISTRIBUTION_ID=$(aws cloudfront list-distributions --query "DistributionList.It
 if [ -n "$DISTRIBUTION_ID" ]; then
   aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
 fi
+
+# Añadir espera para verificación después del despliegue
+echo -e "${YELLOW}Esperando 5 minutos para que los recursos se inicialicen...${NC}"
+sleep 300
+
+# Ejecutar script de verificación
+echo -e "${YELLOW}Verificando despliegue...${NC}"
+bash "$PROJECT_ROOT/infrastructure/verify_deployment.sh"
 
 # Mostrar información de acceso
 echo -e "${GREEN}=== Despliegue completado ===${NC}"
