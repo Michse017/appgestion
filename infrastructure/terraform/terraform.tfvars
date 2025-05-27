@@ -9,9 +9,6 @@ db_password    = "contraseña_segura"
 db_name_user   = "user_db"
 db_name_product = "product_db"
 
-# Dominio
-domain_name    = "tudominio.com"
-
 # SSH Key para acceso a EC2
 ssh_key_path = "/ruta/a/tu-clave.pem"
 ssh_key_name = "nombre-de-tu-clave-en-aws"
