@@ -33,10 +33,10 @@ if ! aws ec2 describe-key-pairs --key-name "$SSH_KEY_NAME" &>/dev/null; then
   exit 1
 fi
 
-# Validar la existencia de la clave privada para los provisioners
-SSH_PRIVATE_KEY=$(grep ssh_private_key_path "$TERRAFORM_DIR/terraform.tfvars" | cut -d '"' -f2)
-if [ ! -f "$SSH_PRIVATE_KEY" ]; then
-  echo -e "${RED}Error: La clave privada ssh '$SSH_PRIVATE_KEY' no existe. Es requerida para los provisioners de Terraform.${NC}"
+# Añadir validación de variables antes de desplegar
+SSH_KEY_NAME=$(grep ssh_key_name "$TERRAFORM_DIR/terraform.tfvars" | cut -d '"' -f2)
+if ! aws ec2 describe-key-pairs --key-name "$SSH_KEY_NAME" &>/dev/null; then
+  echo -e "${RED}Error: La clave SSH '$SSH_KEY_NAME' no existe en AWS${NC}"
   exit 1
 fi
 
