@@ -35,7 +35,6 @@ resource "aws_internet_gateway" "main" {
   }
 }
 
-# Subnets publicas para servicios accesibles
 resource "aws_subnet" "public" {
   count                   = length(var.availability_zones)
   vpc_id                  = aws_vpc.main.id
@@ -48,7 +47,6 @@ resource "aws_subnet" "public" {
   }
 }
 
-# Subnets privadas para bases de datos
 resource "aws_subnet" "private" {
   count             = length(var.availability_zones)
   vpc_id            = aws_vpc.main.id
@@ -60,7 +58,6 @@ resource "aws_subnet" "private" {
   }
 }
 
-# Tabla de rutas para subnets publicas
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -83,7 +80,6 @@ resource "aws_route_table_association" "public" {
 ###############################################################################
 # SECURITY GROUPS
 ###############################################################################
-# Security Group para Application Load Balancer
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb-sg"
   description = "Security group for ALB"
@@ -110,13 +106,11 @@ resource "aws_security_group" "alb" {
   }
 }
 
-# Security Group para EC2
 resource "aws_security_group" "services" {
   name        = "${var.project_name}-services-sg"
   description = "Security group for services"
   vpc_id      = aws_vpc.main.id
 
-  # SSH access from allowed IP
   ingress {
     description = "SSH access"
     from_port   = 22
@@ -125,7 +119,6 @@ resource "aws_security_group" "services" {
     cidr_blocks = [var.allowed_ssh_ip]
   }
 
-  # Allow traffic from ALB a los puertos de servicio (3001 y 3002)
   ingress {
     description     = "Service ports from ALB"
     from_port       = 3001
@@ -134,7 +127,6 @@ resource "aws_security_group" "services" {
     security_groups = [aws_security_group.alb.id]
   }
 
-  # Allow all outbound traffic
   egress {
     description = "Allow all outbound traffic"
     from_port   = 0
@@ -148,13 +140,11 @@ resource "aws_security_group" "services" {
   }
 }
 
-# Security Group para RDS
 resource "aws_security_group" "rds" {
   name        = "${var.project_name}-rds-sg"
   description = "Security group for RDS"
   vpc_id      = aws_vpc.main.id
 
-  # Allow PostgreSQL desde instancias EC2
   ingress {
     description     = "PostgreSQL from services"
     from_port       = 5432
@@ -163,7 +153,6 @@ resource "aws_security_group" "rds" {
     security_groups = [aws_security_group.services.id]
   }
 
-  # Allow PostgreSQL desde la IP del desarrollador (opcional para debug)
   ingress {
     description = "PostgreSQL from developer"
     from_port   = 5432
@@ -197,7 +186,6 @@ resource "aws_db_subnet_group" "main" {
   }
 }
 
-# Base de datos para usuarios
 resource "aws_db_instance" "user_db" {
   identifier             = "${var.project_name}-user-db"
   allocated_storage      = 10
@@ -223,7 +211,6 @@ resource "aws_db_instance" "user_db" {
   }
 }
 
-# Base de datos para productos
 resource "aws_db_instance" "product_db" {
   identifier             = "${var.project_name}-product-db"
   allocated_storage      = 10
@@ -267,7 +254,6 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-# EC2 para servicio de usuarios
 resource "aws_instance" "user_service" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
@@ -311,14 +297,6 @@ EnvironmentFile=/home/ubuntu/.env
 ExecStartPre=-/usr/bin/docker rm -f user-service
 ExecStart=/usr/bin/docker run --name user-service \\
   -p 3001:3001 \\
-  -e POSTGRES_HOST=\\${POSTGRES_HOST} \\
-  -e POSTGRES_USER=\\${POSTGRES_USER} \\
-  -e POSTGRES_PASSWORD=\\${POSTGRES_PASSWORD} \\
-  -e POSTGRES_DB=\\${POSTGRES_DB} \\
-  -e POSTGRES_PORT=\\${POSTGRES_PORT} \\
-  -e PORT=\\${PORT} \\
-  -e DB_MAX_RETRIES=\\${DB_MAX_RETRIES} \\
-  -e DB_RETRY_INTERVAL=\\${DB_RETRY_INTERVAL} \\
   ${var.dockerhub_username}/appgestion-user-service:latest
 ExecStop=/usr/bin/docker stop user-service
 Restart=always
@@ -360,7 +338,6 @@ DIAG
   depends_on = [aws_db_instance.user_db]
 }
 
-# EC2 para servicio de productos
 resource "aws_instance" "product_service" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
@@ -404,14 +381,6 @@ EnvironmentFile=/home/ubuntu/.env
 ExecStartPre=-/usr/bin/docker rm -f product-service
 ExecStart=/usr/bin/docker run --name product-service \\
   -p 3002:3002 \\
-  -e POSTGRES_HOST=\\${POSTGRES_HOST} \\
-  -e POSTGRES_USER=\\${POSTGRES_USER} \\
-  -e POSTGRES_PASSWORD=\\${POSTGRES_PASSWORD} \\
-  -e POSTGRES_DB=\\${POSTGRES_DB} \\
-  -e POSTGRES_PORT=\\${POSTGRES_PORT} \\
-  -e PORT=\\${PORT} \\
-  -e DB_MAX_RETRIES=\\${DB_MAX_RETRIES} \\
-  -e DB_RETRY_INTERVAL=\\${DB_RETRY_INTERVAL} \\
   ${var.dockerhub_username}/appgestion-product-service:latest
 ExecStop=/usr/bin/docker stop product-service
 Restart=always
@@ -456,7 +425,6 @@ DIAG
 ###############################################################################
 # BALANCEADORES DE CARGA (ALB)
 ###############################################################################
-# User Service ALB
 resource "aws_lb" "user_service" {
   name               = "${var.project_name}-user-alb"
   internal           = false
@@ -508,7 +476,6 @@ resource "aws_lb_listener" "user_service" {
   }
 }
 
-# Product Service ALB
 resource "aws_lb" "product_service" {
   name               = "${var.project_name}-product-alb"
   internal           = false
@@ -687,17 +654,8 @@ resource "aws_cloudfront_distribution" "frontend" {
 }
 
 ###############################################################################
-# API GATEWAY + VPC LINK
+# API GATEWAY (SIN VPC LINK)
 ###############################################################################
-resource "aws_api_gateway_vpc_link" "main" {
-  name        = "${var.project_name}-vpc-link"
-  description = "VPC Link para conectar API Gateway con ALBs"
-  target_arns = [
-    aws_lb.user_service.arn,
-    aws_lb.product_service.arn
-  ]
-}
-
 resource "aws_api_gateway_rest_api" "main" {
   name        = "${var.project_name}-api"
   description = "API para ${var.project_name}"
@@ -707,7 +665,6 @@ resource "aws_api_gateway_rest_api" "main" {
   }
 }
 
-# Recurso raiz: a veces se requiere para evitar 403 en llamadas directas
 resource "aws_api_gateway_method" "root_any" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_rest_api.main.root_resource_id
@@ -722,7 +679,7 @@ resource "aws_api_gateway_integration" "root_any" {
 
   type                    = "MOCK"
   integration_http_method = "ANY"
-  uri                     = "http://mock.example" # Solo para evitar 403, no hace un backend real
+  uri                     = "http://mock.example"
 }
 
 ###############################################################################
@@ -742,18 +699,14 @@ resource "aws_api_gateway_method" "users_any" {
 }
 
 resource "aws_api_gateway_integration" "users_any" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.users.id
-  http_method = aws_api_gateway_method.users_any.http_method
-
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.users.id
+  http_method             = aws_api_gateway_method.users_any.http_method
   type                    = "HTTP_PROXY"
   integration_http_method = "ANY"
   uri                     = "http://${aws_lb.user_service.dns_name}/users"
-  connection_type         = "VPC_LINK"
-  connection_id           = aws_api_gateway_vpc_link.main.id
 }
 
-# Opciones CORS para /users
 resource "aws_api_gateway_method" "users_options" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.users.id
@@ -802,7 +755,6 @@ resource "aws_api_gateway_integration_response" "users_options" {
   }
 }
 
-# Proxy para rutas /users/{proxy+}
 resource "aws_api_gateway_resource" "users_proxy" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_resource.users.id
@@ -821,16 +773,12 @@ resource "aws_api_gateway_method" "users_proxy" {
 }
 
 resource "aws_api_gateway_integration" "users_proxy" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.users_proxy.id
-  http_method = aws_api_gateway_method.users_proxy.http_method
-
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.users_proxy.id
+  http_method             = aws_api_gateway_method.users_proxy.http_method
   type                    = "HTTP_PROXY"
   integration_http_method = "ANY"
   uri                     = "http://${aws_lb.user_service.dns_name}/users/{proxy}"
-  connection_type         = "VPC_LINK"
-  connection_id           = aws_api_gateway_vpc_link.main.id
-
   request_parameters = {
     "integration.request.path.proxy" = "method.request.path.proxy"
   }
@@ -853,18 +801,14 @@ resource "aws_api_gateway_method" "products_any" {
 }
 
 resource "aws_api_gateway_integration" "products_any" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.products.id
-  http_method = aws_api_gateway_method.products_any.http_method
-
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.products.id
+  http_method             = aws_api_gateway_method.products_any.http_method
   type                    = "HTTP_PROXY"
   integration_http_method = "ANY"
   uri                     = "http://${aws_lb.product_service.dns_name}/products"
-  connection_type         = "VPC_LINK"
-  connection_id           = aws_api_gateway_vpc_link.main.id
 }
 
-# Opciones CORS para /products
 resource "aws_api_gateway_method" "products_options" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.products.id
@@ -913,7 +857,6 @@ resource "aws_api_gateway_integration_response" "products_options" {
   }
 }
 
-# Proxy para rutas /products/{proxy+}
 resource "aws_api_gateway_resource" "products_proxy" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_resource.products.id
@@ -932,16 +875,12 @@ resource "aws_api_gateway_method" "products_proxy" {
 }
 
 resource "aws_api_gateway_integration" "products_proxy" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.products_proxy.id
-  http_method = aws_api_gateway_method.products_proxy.http_method
-
+  rest_api_id             = aws_api_gateway_rest_api.main.id
+  resource_id             = aws_api_gateway_resource.products_proxy.id
+  http_method             = aws_api_gateway_method.products_proxy.http_method
   type                    = "HTTP_PROXY"
   integration_http_method = "ANY"
   uri                     = "http://${aws_lb.product_service.dns_name}/products/{proxy}"
-  connection_type         = "VPC_LINK"
-  connection_id           = aws_api_gateway_vpc_link.main.id
-
   request_parameters = {
     "integration.request.path.proxy" = "method.request.path.proxy"
   }
