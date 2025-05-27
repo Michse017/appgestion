@@ -237,7 +237,7 @@ resource "aws_db_instance" "product_db" {
 }
 
 ###############################################################################
-# INSTANCIAS EC2 SIMPLIFICADAS
+# INSTANCIAS EC2 SIMPLIFICADAS - CON PROVISIONERS
 ###############################################################################
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -261,81 +261,34 @@ resource "aws_instance" "user_service" {
   vpc_security_group_ids = [aws_security_group.services.id]
   subnet_id              = aws_subnet.public[0].id
 
-  user_data = <<-EOF
-    #!/bin/bash
-    exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
-    echo "############### INICIANDO CONFIGURACION USER SERVICE ###############"
-
-    apt-get update
-    apt-get install -y docker.io awscli curl jq netcat-openbsd
-    apt-get clean
-
-    systemctl enable docker
-    systemctl start docker
-    usermod -aG docker ubuntu
-
-    cat > /home/ubuntu/.env <<EOL
-POSTGRES_HOST=${aws_db_instance.user_db.address}
-POSTGRES_USER=${var.db_username}
-POSTGRES_PASSWORD=${var.db_password}
-POSTGRES_DB=${var.db_name_user}
-POSTGRES_PORT=5432
-PORT=3001
-DB_MAX_RETRIES=60
-DB_RETRY_INTERVAL=5
-EOL
-    chmod 600 /home/ubuntu/.env
-
-    cat > /etc/systemd/system/user-service.service <<EOL
-[Unit]
-Description=User Service Container
-After=docker.service
-Requires=docker.service
-
-[Service]
-EnvironmentFile=/home/ubuntu/.env
-ExecStartPre=-/usr/bin/docker rm -f user-service
-ExecStart=/usr/bin/docker run --name user-service \\
-  -p 3001:3001 \\
-  ${var.dockerhub_username}/appgestion-user-service:latest
-ExecStop=/usr/bin/docker stop user-service
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOL
-
-    # Añadir script diagnose.sh para diagnosticos
-    cat > /home/ubuntu/diagnose.sh <<'DIAG'
-#!/bin/bash
-echo "===== DIAGNoSTICO SERVICE ====="
-echo "Estado del servicio systemd:"
-sudo systemctl status user-service
-echo "Contenedores Docker:"
-sudo docker ps -a
-echo "Logs del contenedor:"
-sudo docker logs user-service
-echo "Verificar conexion a PostgreSQL:"
-source /home/ubuntu/.env
-echo "Intentando conectar a \$POSTGRES_HOST..."
-nc -zv \$POSTGRES_HOST 5432
-echo "Prueba HTTP:"
-curl -v http://localhost:3001/health
-DIAG
-    chmod +x /home/ubuntu/diagnose.sh
-
-    systemctl daemon-reload
-    systemctl enable user-service
-    systemctl start user-service
-
-    echo "############### CONFIGURACION USER SERVICE COMPLETADA ###############"
-  EOF
-
   tags = {
     Name = "${var.project_name}-user-service"
   }
 
   depends_on = [aws_db_instance.user_db]
+
+  provisioner "file" {
+    source      = "${path.module}/../setup.sh"
+    destination = "/home/ubuntu/setup.sh"
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file(var.ssh_private_key_path)
+      host        = self.public_ip
+    }
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sudo bash /home/ubuntu/setup.sh user"
+    ]
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file(var.ssh_private_key_path)
+      host        = self.public_ip
+    }
+  }
 }
 
 resource "aws_instance" "product_service" {
@@ -345,81 +298,34 @@ resource "aws_instance" "product_service" {
   vpc_security_group_ids = [aws_security_group.services.id]
   subnet_id              = aws_subnet.public[0].id
 
-  user_data = <<-EOF
-    #!/bin/bash
-    exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
-    echo "############### INICIANDO CONFIGURACION PRODUCT SERVICE ###############"
-
-    apt-get update
-    apt-get install -y docker.io awscli curl jq netcat-openbsd
-    apt-get clean
-
-    systemctl enable docker
-    systemctl start docker
-    usermod -aG docker ubuntu
-
-    cat > /home/ubuntu/.env <<EOL
-POSTGRES_HOST=${aws_db_instance.product_db.address}
-POSTGRES_USER=${var.db_username}
-POSTGRES_PASSWORD=${var.db_password}
-POSTGRES_DB=${var.db_name_product}
-POSTGRES_PORT=5432
-PORT=3002
-DB_MAX_RETRIES=60
-DB_RETRY_INTERVAL=5
-EOL
-    chmod 600 /home/ubuntu/.env
-
-    cat > /etc/systemd/system/product-service.service <<EOL
-[Unit]
-Description=Product Service Container
-After=docker.service
-Requires=docker.service
-
-[Service]
-EnvironmentFile=/home/ubuntu/.env
-ExecStartPre=-/usr/bin/docker rm -f product-service
-ExecStart=/usr/bin/docker run --name product-service \\
-  -p 3002:3002 \\
-  ${var.dockerhub_username}/appgestion-product-service:latest
-ExecStop=/usr/bin/docker stop product-service
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-EOL
-
-    # Añadir script diagnose.sh para diagnosticos
-    cat > /home/ubuntu/diagnose.sh <<'DIAG'
-#!/bin/bash
-echo "===== DIAGNoSTICO SERVICE ====="
-echo "Estado del servicio systemd:"
-sudo systemctl status product-service
-echo "Contenedores Docker:"
-sudo docker ps -a
-echo "Logs del contenedor:"
-sudo docker logs product-service
-echo "Verificar conexion a PostgreSQL:"
-source /home/ubuntu/.env
-echo "Intentando conectar a \$POSTGRES_HOST..."
-nc -zv \$POSTGRES_HOST 5432
-echo "Prueba HTTP:"
-curl -v http://localhost:3002/health
-DIAG
-    chmod +x /home/ubuntu/diagnose.sh
-
-    systemctl daemon-reload
-    systemctl enable product-service
-    systemctl start product-service
-
-    echo "############### CONFIGURACION PRODUCT SERVICE COMPLETADA ###############"
-  EOF
-
   tags = {
     Name = "${var.project_name}-product-service"
   }
 
   depends_on = [aws_db_instance.product_db]
+
+  provisioner "file" {
+    source      = "${path.module}/../setup.sh"
+    destination = "/home/ubuntu/setup.sh"
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file(var.ssh_private_key_path)
+      host        = self.public_ip
+    }
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "sudo bash /home/ubuntu/setup.sh product"
+    ]
+    connection {
+      type        = "ssh"
+      user        = "ubuntu"
+      private_key = file(var.ssh_private_key_path)
+      host        = self.public_ip
+    }
+  }
 }
 
 ###############################################################################

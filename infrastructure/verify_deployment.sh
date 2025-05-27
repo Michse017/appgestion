@@ -19,11 +19,9 @@ if [ ! -d "$TERRAFORM_DIR" ]; then
   exit 1
 fi
 
-# Cambiar al directorio de Terraform
 cd "$TERRAFORM_DIR"
 echo -e "${YELLOW}Obteniendo datos de Terraform desde: $(pwd)${NC}"
 
-# Obtener outputs con manejo de errores
 API_URL=$(terraform output -raw api_gateway_invoke_url 2>/dev/null || echo "NO_DISPONIBLE")
 FRONTEND_URL=$(terraform output -raw frontend_cloudfront_domain 2>/dev/null || echo "NO_DISPONIBLE")
 USER_ALB=$(terraform output -raw user_service_endpoint 2>/dev/null || echo "NO_DISPONIBLE")
@@ -31,9 +29,10 @@ PRODUCT_ALB=$(terraform output -raw product_service_endpoint 2>/dev/null || echo
 USER_DB=$(terraform output -raw user_db_endpoint 2>/dev/null || echo "NO_DISPONIBLE")
 PRODUCT_DB=$(terraform output -raw product_db_endpoint 2>/dev/null || echo "NO_DISPONIBLE")
 
+# CORRECCIÓN: Siempre terminar API_URL con una sola /
+API_URL="${API_URL%/}/"
 
 echo -e "${YELLOW}Verificando bases de datos...${NC}"
-# Obtener credenciales de BD de terraform.tfvars
 DB_USER=$(grep db_username terraform.tfvars | cut -d '"' -f2)
 DB_PASS=$(grep db_password terraform.tfvars | cut -d '"' -f2)
 
@@ -56,23 +55,21 @@ curl -v http://$PRODUCT_ALB/health || echo -e "${RED}Error accediendo al Product
 
 echo -e "${YELLOW}Verificando API Gateway...${NC}"
 echo "User API Health Check:"
-curl -v ${API_URL}users/health || echo -e "${RED}Error accediendo a la API de Users${NC}"
+curl -v "${API_URL}users/health" || echo -e "${RED}Error accediendo a la API de Users${NC}"
 
 echo "Product API Health Check:"
-curl -v ${API_URL}products/health || echo -e "${RED}Error accediendo a la API de Products${NC}"
+curl -v "${API_URL}products/health" || echo -e "${RED}Error accediendo a la API de Products${NC}"
 
 echo -e "${YELLOW}Probando Frontend URL...${NC}"
 curl -I https://$FRONTEND_URL || echo -e "${RED}Error accediendo al Frontend${NC}"
 
 echo -e "${YELLOW}Verificando funcionalidad de APIs...${NC}"
-# Intentar crear un usuario de prueba
 echo "Intentando crear un usuario de prueba..."
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{"name":"Test User", "email":"test@example.com", "password":"testpass"}' \
   "${API_URL}users" || echo -e "${RED}Error creando usuario de prueba${NC}"
 
-# Intentar crear un producto de prueba
 echo "Intentando crear un producto de prueba..."
 curl -X POST \
   -H "Content-Type: application/json" \
