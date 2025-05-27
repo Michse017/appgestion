@@ -68,8 +68,13 @@ echo -e "${GREEN}=== Obteniendo datos de salida ===${NC}"
 API_URL=$(terraform output -raw api_gateway_invoke_url)
 FRONTEND_URL=$(terraform output -raw frontend_cloudfront_domain)
 S3_BUCKET=$(terraform output -raw frontend_bucket_name)
-USER_SERVICE_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=${var.project_name}-user-service" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
-PRODUCT_SERVICE_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=${var.project_name}-product-service" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+
+# Obtener el nombre del proyecto desde terraform.tfvars
+PROJECT_NAME=$(grep project_name "$TERRAFORM_DIR/terraform.tfvars" | cut -d '"' -f2)
+
+# Usar el nombre del proyecto en los filtros
+USER_SERVICE_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=$PROJECT_NAME-user-service" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+PRODUCT_SERVICE_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=$PROJECT_NAME-product-service" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
 
 # Actualizar frontend con URL real de API
 cd "$PROJECT_ROOT/frontend"
