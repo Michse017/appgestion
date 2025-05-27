@@ -77,90 +77,106 @@ resource "aws_route_table_association" "public" {
 }
 
 # SECURITY GROUPS SIMPLIFICADOS
-# SG para servicios - permitir trafico web y SSH para administracion
-resource "aws_security_group" "services" {
-  name        = "${var.project_name}-services-sg"
-  description = "Permite trafico para los servicios"
+# Security Group para Application Load Balancer
+resource "aws_security_group" "alb" {
+  name        = "${var.project_name}-alb-sg"
+  description = "Security group for ALB"
   vpc_id      = aws_vpc.main.id
   
-  # SSH - solo desde IP especifica
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.allowed_ssh_ip]
-    description = "SSH"
-  }
-  
-  # HTTP para los servicios - abierto a internet
-  ingress {
-    from_port   = 3001
-    to_port     = 3002
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Puertos de servicios"
-  }
-  
-  # HTTP estandar para ALB
   ingress {
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP ALB"
+    description = "HTTP access from anywhere"
   }
   
-  # Permitir todo el trafico de salida
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Todo el trafico de salida"
+    description = "Allow all outbound traffic"
+  }
+  
+  tags = {
+    Name = "${var.project_name}-alb-sg"
   }
 }
 
-# SG para bases de datos - permitir solo desde servicios
-resource "aws_security_group" "rds" {
-  name        = "${var.project_name}-rds-sg"
-  description = "Permite conexiones a bases de datos"
+# Security Group para EC2 instances
+resource "aws_security_group" "services" {
+  name        = "${var.project_name}-services-sg"
+  description = "Security group for services"
   vpc_id      = aws_vpc.main.id
   
-  # Acceso PostgreSQL desde servicios
+  # SSH access from allowed IP
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.allowed_ssh_ip]
+    description = "SSH access"
+  }
+  
+  # Allow traffic from ALB to service ports
+  ingress {
+    from_port       = 3001
+    to_port         = 3002
+    protocol        = "tcp"
+    security_groups = [aws_security_group.alb.id]
+    description     = "Service ports from ALB"
+  }
+  
+  # Allow all outbound traffic
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Allow all outbound traffic"
+  }
+  
+  tags = {
+    Name = "${var.project_name}-services-sg"
+  }
+}
+
+# Security Group para RDS
+resource "aws_security_group" "rds" {
+  name        = "${var.project_name}-rds-sg"
+  description = "Security group for RDS"
+  vpc_id      = aws_vpc.main.id
+  
+  # Allow PostgreSQL from EC2 instances
   ingress {
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
     security_groups = [aws_security_group.services.id]
-    description     = "PostgreSQL desde servicios"
+    description     = "PostgreSQL from services"
   }
   
-  # Para desarrollo, tambien permitir desde la IP del desarrollador
+  # Allow PostgreSQL from developer's IP
   ingress {
     from_port   = 5432
     to_port     = 5432
     protocol    = "tcp"
     cidr_blocks = [var.allowed_ssh_ip]
-    description = "PostgreSQL desde desarrollador"
+    description = "PostgreSQL from developer"
   }
   
-  # Permitir todo el trafico de salida
+  # Allow all outbound traffic
   egress {
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "Todo el trafico de salida"
+    description = "Allow all outbound traffic"
   }
-}
-
-# ALMACENAMIENTO DE SECRETOS
-resource "aws_secretsmanager_secret" "db_credentials" {
-  name                    = "${var.project_name}-db-credentials-${formatdate("YYYYMMDD", timestamp())}"
-  recovery_window_in_days = 0
   
   tags = {
-    Name = "${var.project_name}-db-credentials"
+    Name = "${var.project_name}-rds-sg"
   }
 }
 
@@ -176,19 +192,26 @@ resource "aws_db_subnet_group" "main" {
 
 # Base de datos para usuarios
 resource "aws_db_instance" "user_db" {
-  identifier           = "${var.project_name}-user-db"
-  allocated_storage    = 10
-  engine               = "postgres"
-  engine_version       = "13"
-  instance_class       = var.db_instance_class
-  db_name              = var.db_name_user
-  username             = var.db_username
-  password             = var.db_password
-  parameter_group_name = "default.postgres13"
-  skip_final_snapshot  = true
-  publicly_accessible  = true  # Para facilitar desarrollo
-  db_subnet_group_name = aws_db_subnet_group.main.name
+  identifier             = "${var.project_name}-user-db"
+  allocated_storage      = 10
+  engine                 = "postgres"
+  engine_version         = "13"
+  instance_class         = var.db_instance_class
+  db_name                = var.db_name_user
+  username               = var.db_username
+  password               = var.db_password
+  parameter_group_name   = "default.postgres13"
+  skip_final_snapshot    = true
+  publicly_accessible    = true  # Para facilitar desarrollo
+  db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
+  
+  # Configuracion adicional para una mejor experiencia de desarrollo
+  apply_immediately            = true
+  backup_retention_period      = 1
+  deletion_protection          = false
+  auto_minor_version_upgrade   = false
+  performance_insights_enabled = false
   
   tags = {
     Name = "${var.project_name}-user-db"
@@ -197,201 +220,140 @@ resource "aws_db_instance" "user_db" {
 
 # Base de datos para productos
 resource "aws_db_instance" "product_db" {
-  identifier           = "${var.project_name}-product-db"
-  allocated_storage    = 10
-  engine               = "postgres"
-  engine_version       = "13"
-  instance_class       = var.db_instance_class
-  db_name              = var.db_name_product
-  username             = var.db_username
-  password             = var.db_password
-  parameter_group_name = "default.postgres13"
-  skip_final_snapshot  = true
-  publicly_accessible  = true  # Para facilitar desarrollo
-  db_subnet_group_name = aws_db_subnet_group.main.name
+  identifier             = "${var.project_name}-product-db"
+  allocated_storage      = 10
+  engine                 = "postgres"
+  engine_version         = "13"
+  instance_class         = var.db_instance_class
+  db_name                = var.db_name_product
+  username               = var.db_username
+  password               = var.db_password
+  parameter_group_name   = "default.postgres13"
+  skip_final_snapshot    = true
+  publicly_accessible    = true  # Para facilitar desarrollo
+  db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
+  
+  # Configuracion adicional para una mejor experiencia de desarrollo
+  apply_immediately            = true
+  backup_retention_period      = 1
+  deletion_protection          = false
+  auto_minor_version_upgrade   = false
+  performance_insights_enabled = false
   
   tags = {
     Name = "${var.project_name}-product-db"
   }
 }
 
-# INSTANCIAS EC2 CORREGIDAS
-# AMI de Ubuntu mas reciente
+# INSTANCIAS EC2 SIMPLIFICADAS
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"] # Canonical (Ubuntu)
-
+  owners      = ["099720109477"] # Canonical
+  
   filter {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
   }
-
+  
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
   }
 }
 
-# IAM para acceso a secretos
-resource "aws_iam_role" "ec2_role" {
-  name = "${var.project_name}-ec2-role"
-  
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Action = "sts:AssumeRole",
-        Effect = "Allow",
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-      }
-    ]
-  })
-}
-
-resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "${var.project_name}-ec2-profile"
-  role = aws_iam_role.ec2_role.name
-}
-
-# EC2 para servicio de usuarios - COMPLETAMENTE CORREGIDO
+# EC2 para servicio de usuarios
 resource "aws_instance" "user_service" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   key_name               = var.ssh_key_name
   vpc_security_group_ids = [aws_security_group.services.id]
   subnet_id              = aws_subnet.public[0].id
-  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   
   user_data = <<-EOF
 #!/bin/bash
-# Mejora para user_service
-set -e
-exec > >(tee /var/log/user-data.log) 2>&1
+# Script simplificado para user_service
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+echo "############### INICIANDO CONFIGURACIoN ###############"
 
-echo "INICIANDO CONFIGURACION DE USER-SERVICE..."
-apt-get update && apt-get install -y docker.io awscli curl postgresql-client jq
+# Actualizar e instalar dependencias
+echo "Actualizando sistema e instalando dependencias..."
+apt-get update
+apt-get install -y docker.io awscli curl jq
 
-# Crear variables de entorno con valores correctos
-cat > /etc/environment <<EOL
+# Configurar Docker y permisos
+echo "Configurando Docker..."
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ubuntu
+
+# Configurar variables de entorno
+echo "Configurando variables de entorno..."
+cat > /home/ubuntu/.env <<EOL
 POSTGRES_HOST=${aws_db_instance.user_db.address}
 POSTGRES_USER=${var.db_username}
 POSTGRES_PASSWORD=${var.db_password}
 POSTGRES_DB=${var.db_name_user}
 POSTGRES_PORT=5432
-DB_MAX_RETRIES=120  # Aumentar para dar mas tiempo
+DB_MAX_RETRIES=60
 DB_RETRY_INTERVAL=5
 EOL
+chmod 600 /home/ubuntu/.env
 
-# Exportar variables para este script
-set -a
-source /etc/environment
-set +a
+# Configurar Docker para iniciar automaticamente en reinicios
+echo "Instalando servicio para iniciar Docker..."
+cat > /etc/systemd/system/user-service.service <<EOL
+[Unit]
+Description=User Service Container
+After=docker.service
+Requires=docker.service
 
-# Verificar PostgreSQL con reintento extendido
-echo "VERIFICANDO CONEXION A POSTGRESQL..."
-max_attempts=60  # 10 minutos
-attempt=1
-while [ $attempt -le $max_attempts ]; do
-  echo "Intento $attempt/$max_attempts: Conectando a PostgreSQL..."
-  if PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT 1" > /dev/null 2>&1; then
-    echo "✅ Conexion a PostgreSQL exitosa"
-    # Crear tablas iniciales si es necesario
-    PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
-      CREATE TABLE IF NOT EXISTS users (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        email VARCHAR(100) UNIQUE NOT NULL,
-        password_hash VARCHAR(256) NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      );"
-    break
-  fi
-  echo "Conexion fallida. Reintentando en 10 segundos..."
-  sleep 10
-  attempt=$((attempt+1))
-done
-
-if [ $attempt -gt $max_attempts ]; then
-  echo "❌ Error: No se pudo conectar a PostgreSQL despues de $max_attempts intentos"
-  exit 1
-fi
-
-# Eliminar contenedores previos si existen
-docker rm -f user-service || true
-
-# Ejecutar contenedor Docker con variables correctas
-echo "INICIANDO CONTENEDOR DOCKER..."
-docker pull ${var.dockerhub_username}/appgestion-user-service:latest
-docker run -d --name user-service \
-  --restart always \
+[Service]
+EnvironmentFile=/home/ubuntu/.env
+ExecStartPre=-/usr/bin/docker rm -f user-service
+ExecStart=/usr/bin/docker run --name user-service \
   -p 3001:3001 \
-  -e POSTGRES_HOST=$POSTGRES_HOST \
-  -e POSTGRES_USER=$POSTGRES_USER \
-  -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-  -e POSTGRES_DB=$POSTGRES_DB \
-  -e POSTGRES_PORT=$POSTGRES_PORT \
-  -e DB_MAX_RETRIES=$DB_MAX_RETRIES \
-  -e DB_RETRY_INTERVAL=$DB_RETRY_INTERVAL \
+  -e POSTGRES_HOST=\${POSTGRES_HOST} \
+  -e POSTGRES_USER=\${POSTGRES_USER} \
+  -e POSTGRES_PASSWORD=\${POSTGRES_PASSWORD} \
+  -e POSTGRES_DB=\${POSTGRES_DB} \
+  -e POSTGRES_PORT=\${POSTGRES_PORT} \
+  -e DB_MAX_RETRIES=\${DB_MAX_RETRIES} \
+  -e DB_RETRY_INTERVAL=\${DB_RETRY_INTERVAL} \
   ${var.dockerhub_username}/appgestion-user-service:latest
+ExecStop=/usr/bin/docker stop user-service
+Restart=always
 
-# Verificar que el servicio esta disponible
-echo "VERIFICANDO DISPONIBILIDAD DEL SERVICIO..."
-attempt=1
-max_attempts=30
-while [ $attempt -le $max_attempts ]; do
-  echo "Intento $attempt/$max_attempts: Verificando servicio..."
-  if curl -s http://localhost:3001/health | grep -q "healthy"; then
-    echo "✅ Servicio disponible"
-    break
-  fi
-  
-  # Mostrar logs si hay problemas
-  if [ $attempt -eq 10 ]; then
-    echo "⚠️ Mostrando logs del contenedor para diagnostico:"
-    docker logs user-service
-  fi
-  
-  echo "Servicio no disponible. Reintentando en 10 segundos..."
-  sleep 10
-  attempt=$((attempt+1))
-done
+[Install]
+WantedBy=multi-user.target
+EOL
 
-if [ $attempt -gt $max_attempts ]; then
-  echo "❌ Error: El servicio no esta disponible despues de $max_attempts intentos"
-  docker logs user-service
-  exit 1
-fi
+systemctl daemon-reload
+systemctl enable user-service
+systemctl start user-service
 
-# Crear un script para diagnostico
-cat > /home/ubuntu/diagnose.sh <<'EOS'
+# Script de diagnostico
+cat > /home/ubuntu/diagnose.sh <<'EOL'
 #!/bin/bash
-echo "=== DIAGNOSTICO DEL SERVICIO ==="
-echo "Informacion del sistema:"
-uname -a
-uptime
-echo
-echo "Docker containers:"
-docker ps -a
-echo
+echo "===== DIAGNoSTICO USER SERVICE ====="
+echo "Estado del servicio systemd:"
+sudo systemctl status user-service
+echo "Contenedores Docker:"
+sudo docker ps -a
 echo "Logs del contenedor:"
-docker logs user-service
-echo
-echo "Verificacion de salud:"
+sudo docker logs user-service
+echo "Verificar conexion a PostgreSQL:"
+source /home/ubuntu/.env
+echo "Intentando conectar a $POSTGRES_HOST..."
+nc -zv $POSTGRES_HOST 5432
+echo "Prueba HTTP:"
 curl -v http://localhost:3001/health
-echo
-echo "Prueba de conexion a BD:"
-source /etc/environment
-PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM users;"
-EOS
-
+EOL
 chmod +x /home/ubuntu/diagnose.sh
-echo "✅ CONFIGURACION COMPLETADA"
+
+echo "############### CONFIGURACIoN COMPLETADA ###############"
 EOF
-  
+
   tags = {
     Name = "${var.project_name}-user-service"
   }
@@ -399,143 +361,98 @@ EOF
   depends_on = [aws_db_instance.user_db]
 }
 
-# EC2 para servicio de productos - COMPLETAMENTE CORREGIDO
+# EC2 para servicio de productos
 resource "aws_instance" "product_service" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   key_name               = var.ssh_key_name
   vpc_security_group_ids = [aws_security_group.services.id]
   subnet_id              = aws_subnet.public[0].id
-  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   
   user_data = <<-EOF
 #!/bin/bash
-# Configuracion mejorada para product-service
-set -e
-exec > >(tee /var/log/user-data.log) 2>&1
+# Script simplificado para product_service
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+echo "############### INICIANDO CONFIGURACIoN ###############"
 
-echo "INICIANDO CONFIGURACION DE PRODUCT-SERVICE..."
-apt-get update && apt-get install -y docker.io awscli curl postgresql-client jq
+# Actualizar e instalar dependencias
+echo "Actualizando sistema e instalando dependencias..."
+apt-get update
+apt-get install -y docker.io awscli curl jq
 
-# Crear variables de entorno con valores correctos
-cat > /etc/environment <<EOL
+# Configurar Docker y permisos
+echo "Configurando Docker..."
+systemctl enable docker
+systemctl start docker
+usermod -aG docker ubuntu
+
+# Configurar variables de entorno
+echo "Configurando variables de entorno..."
+cat > /home/ubuntu/.env <<EOL
 POSTGRES_HOST=${aws_db_instance.product_db.address}
 POSTGRES_USER=${var.db_username}
 POSTGRES_PASSWORD=${var.db_password}
 POSTGRES_DB=${var.db_name_product}
 POSTGRES_PORT=5432
-DB_MAX_RETRIES=120  # Aumentar para dar mas tiempo
+DB_MAX_RETRIES=60
 DB_RETRY_INTERVAL=5
 EOL
+chmod 600 /home/ubuntu/.env
 
-# Exportar variables para este script
-set -a
-source /etc/environment
-set +a
+# Configurar Docker para iniciar automaticamente en reinicios
+echo "Instalando servicio para iniciar Docker..."
+cat > /etc/systemd/system/product-service.service <<EOL
+[Unit]
+Description=Product Service Container
+After=docker.service
+Requires=docker.service
 
-# Verificar PostgreSQL con reintento extendido
-echo "VERIFICANDO CONEXION A POSTGRESQL..."
-max_attempts=60  # 10 minutos
-attempt=1
-while [ $attempt -le $max_attempts ]; do
-  echo "Intento $attempt/$max_attempts: Conectando a PostgreSQL..."
-  if PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT 1" > /dev/null 2>&1; then
-    echo "✅ Conexion a PostgreSQL exitosa"
-    # Crear tablas iniciales si es necesario
-    PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "
-      CREATE TABLE IF NOT EXISTS products (
-        id SERIAL PRIMARY KEY,
-        name VARCHAR(100) NOT NULL,
-        description TEXT,
-        price DECIMAL(10,2) NOT NULL,
-        stock INTEGER DEFAULT 0,
-        created_at TIMESTAMP DEFAULT NOW(),
-        updated_at TIMESTAMP DEFAULT NOW()
-      );"
-    break
-  fi
-  echo "Conexion fallida. Reintentando en 10 segundos..."
-  sleep 10
-  attempt=$((attempt+1))
-done
-
-if [ $attempt -gt $max_attempts ]; then
-  echo "❌ Error: No se pudo conectar a PostgreSQL despues de $max_attempts intentos"
-  exit 1
-fi
-
-# Eliminar contenedores previos si existen
-docker rm -f product-service || true
-
-# Ejecutar contenedor Docker con variables correctas
-echo "INICIANDO CONTENEDOR DOCKER..."
-docker pull ${var.dockerhub_username}/appgestion-product-service:latest
-docker run -d --name product-service \
-  --restart always \
+[Service]
+EnvironmentFile=/home/ubuntu/.env
+ExecStartPre=-/usr/bin/docker rm -f product-service
+ExecStart=/usr/bin/docker run --name product-service \
   -p 3002:3002 \
-  -e POSTGRES_HOST=$POSTGRES_HOST \
-  -e POSTGRES_USER=$POSTGRES_USER \
-  -e POSTGRES_PASSWORD=$POSTGRES_PASSWORD \
-  -e POSTGRES_DB=$POSTGRES_DB \
-  -e POSTGRES_PORT=$POSTGRES_PORT \
-  -e DB_MAX_RETRIES=$DB_MAX_RETRIES \
-  -e DB_RETRY_INTERVAL=$DB_RETRY_INTERVAL \
+  -e POSTGRES_HOST=\${POSTGRES_HOST} \
+  -e POSTGRES_USER=\${POSTGRES_USER} \
+  -e POSTGRES_PASSWORD=\${POSTGRES_PASSWORD} \
+  -e POSTGRES_DB=\${POSTGRES_DB} \
+  -e POSTGRES_PORT=\${POSTGRES_PORT} \
+  -e DB_MAX_RETRIES=\${DB_MAX_RETRIES} \
+  -e DB_RETRY_INTERVAL=\${DB_RETRY_INTERVAL} \
   ${var.dockerhub_username}/appgestion-product-service:latest
+ExecStop=/usr/bin/docker stop product-service
+Restart=always
 
-# Verificar que el servicio esta disponible
-echo "VERIFICANDO DISPONIBILIDAD DEL SERVICIO..."
-attempt=1
-max_attempts=30
-while [ $attempt -le $max_attempts ]; do
-  echo "Intento $attempt/$max_attempts: Verificando servicio..."
-  if curl -s http://localhost:3002/health | grep -q "healthy"; then
-    echo "✅ Servicio disponible"
-    break
-  fi
-  
-  # Mostrar logs si hay problemas
-  if [ $attempt -eq 10 ]; then
-    echo "⚠️ Mostrando logs del contenedor para diagnostico:"
-    docker logs product-service
-  fi
-  
-  echo "Servicio no disponible. Reintentando en 10 segundos..."
-  sleep 10
-  attempt=$((attempt+1))
-done
+[Install]
+WantedBy=multi-user.target
+EOL
 
-if [ $attempt -gt $max_attempts ]; then
-  echo "❌ Error: El servicio no esta disponible despues de $max_attempts intentos"
-  docker logs product-service
-  exit 1
-fi
+systemctl daemon-reload
+systemctl enable product-service
+systemctl start product-service
 
-# Crear un script para diagnostico
-cat > /home/ubuntu/diagnose.sh <<'EOS'
+# Script de diagnostico
+cat > /home/ubuntu/diagnose.sh <<'EOL'
 #!/bin/bash
-echo "=== DIAGNOSTICO DEL SERVICIO ==="
-echo "Informacion del sistema:"
-uname -a
-uptime
-echo
-echo "Docker containers:"
-docker ps -a
-echo
+echo "===== DIAGNoSTICO PRODUCT SERVICE ====="
+echo "Estado del servicio systemd:"
+sudo systemctl status product-service
+echo "Contenedores Docker:"
+sudo docker ps -a
 echo "Logs del contenedor:"
-docker logs product-service
-echo
-echo "Verificacion de salud:"
+sudo docker logs product-service
+echo "Verificar conexion a PostgreSQL:"
+source /home/ubuntu/.env
+echo "Intentando conectar a $POSTGRES_HOST..."
+nc -zv $POSTGRES_HOST 5432
+echo "Prueba HTTP:"
 curl -v http://localhost:3002/health
-echo
-echo "Prueba de conexion a BD:"
-source /etc/environment
-PGPASSWORD=$POSTGRES_PASSWORD psql -h $POSTGRES_HOST -U $POSTGRES_USER -d $POSTGRES_DB -c "SELECT count(*) FROM products;"
-EOS
-
+EOL
 chmod +x /home/ubuntu/diagnose.sh
-echo "✅ CONFIGURACION COMPLETADA"
+
+echo "############### CONFIGURACIoN COMPLETADA ###############"
 EOF
-  
+
   tags = {
     Name = "${var.project_name}-product-service"
   }
@@ -543,13 +460,13 @@ EOF
   depends_on = [aws_db_instance.product_db]
 }
 
-# LOAD BALANCERS SIMPLIFICADOS - USAMOS ALBs
-# ALB para servicio de usuarios 
+# BALANCEADORES DE CARGA (ALB)
+# User Service ALB
 resource "aws_lb" "user_service" {
   name               = "${var.project_name}-user-alb"
   internal           = false
-  load_balancer_type = "application"  # Volvemos a usar ALB
-  security_groups    = [aws_security_group.services.id]
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.public[*].id
   
   tags = {
@@ -558,20 +475,24 @@ resource "aws_lb" "user_service" {
 }
 
 resource "aws_lb_target_group" "user_service" {
-  name     = "${var.project_name}-user-tg"
-  port     = 3001
-  protocol = "HTTP"
-  vpc_id   = aws_vpc.main.id
+  name                 = "${var.project_name}-user-tg"
+  port                 = 3001
+  protocol             = "HTTP"
+  vpc_id               = aws_vpc.main.id
+  deregistration_delay = 30
   
   health_check {
     path                = "/health"
-    protocol            = "HTTP"
-    port                = "3001"
+    port                = 3001
     interval            = 30
-    timeout             = 5
+    timeout             = 10
     healthy_threshold   = 2
-    unhealthy_threshold = 2
+    unhealthy_threshold = 3
     matcher             = "200"
+  }
+  
+  tags = {
+    Name = "${var.project_name}-user-tg"
   }
 }
 
@@ -592,12 +513,12 @@ resource "aws_lb_listener" "user_service" {
   }
 }
 
-# ALB para servicio de productos
+# Product Service ALB
 resource "aws_lb" "product_service" {
   name               = "${var.project_name}-product-alb"
   internal           = false
-  load_balancer_type = "application"  # Volvemos a usar ALB
-  security_groups    = [aws_security_group.services.id]
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.public[*].id
   
   tags = {
@@ -606,20 +527,24 @@ resource "aws_lb" "product_service" {
 }
 
 resource "aws_lb_target_group" "product_service" {
-  name     = "${var.project_name}-product-tg"
-  port     = 3002
-  protocol = "HTTP"
-  vpc_id   = aws_vpc.main.id
+  name                 = "${var.project_name}-product-tg"
+  port                 = 3002
+  protocol             = "HTTP"
+  vpc_id               = aws_vpc.main.id
+  deregistration_delay = 30
   
   health_check {
     path                = "/health"
-    protocol            = "HTTP"
-    port                = "3002"
+    port                = 3002
     interval            = 30
-    timeout             = 5
+    timeout             = 10
     healthy_threshold   = 2
-    unhealthy_threshold = 2
+    unhealthy_threshold = 3
     matcher             = "200"
+  }
+  
+  tags = {
+    Name = "${var.project_name}-product-tg"
   }
 }
 
@@ -690,14 +615,12 @@ resource "aws_cloudfront_origin_access_identity" "frontend" {
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({
-    Version = "2012-10-17",
+    Version = "2012-10-17"
     Statement = [
       {
-        Effect    = "Allow",
-        Principal = {
-          AWS = aws_cloudfront_origin_access_identity.frontend.iam_arn
-        },
-        Action    = "s3:GetObject",
+        Effect    = "Allow"
+        Principal = { AWS = aws_cloudfront_origin_access_identity.frontend.iam_arn }
+        Action    = "s3:GetObject"
         Resource  = "${aws_s3_bucket.frontend.arn}/*"
       }
     ]
@@ -725,9 +648,7 @@ resource "aws_cloudfront_distribution" "frontend" {
     
     forwarded_values {
       query_string = false
-      cookies {
-        forward = "none"
-      }
+      cookies { forward = "none" }
     }
     
     viewer_protocol_policy = "redirect-to-https"
@@ -737,7 +658,6 @@ resource "aws_cloudfront_distribution" "frontend" {
     compress               = true
   }
   
-  # Para aplicaciones SPA
   custom_error_response {
     error_code         = 403
     response_code      = 200
@@ -765,7 +685,14 @@ resource "aws_cloudfront_distribution" "frontend" {
   }
 }
 
-# API REST - SIMPLIFICADO PARA USAR HTTP PROXY
+# VPC LINK - Para conectar API Gateway con ALB
+resource "aws_api_gateway_vpc_link" "main" {
+  name        = "${var.project_name}-vpc-link"
+  description = "VPC Link para conectar API Gateway con ALBs"
+  target_arns = [aws_lb.user_service.arn, aws_lb.product_service.arn]
+}
+
+# API GATEWAY
 resource "aws_api_gateway_rest_api" "main" {
   name        = "${var.project_name}-api"
   description = "API para ${var.project_name}"
@@ -775,7 +702,7 @@ resource "aws_api_gateway_rest_api" "main" {
   }
 }
 
-# CONFIGURACIoN DE CORS PARA API GATEWAY
+# Recursos para API Gateway
 resource "aws_api_gateway_resource" "users" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_rest_api.main.root_resource_id
@@ -788,7 +715,7 @@ resource "aws_api_gateway_resource" "products" {
   path_part   = "products"
 }
 
-# HTTP PROXY para endpoint de usuarios
+# Metodos ANY para Users
 resource "aws_api_gateway_method" "users_any" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.users.id
@@ -802,60 +729,15 @@ resource "aws_api_gateway_integration" "users_any" {
   http_method = aws_api_gateway_method.users_any.http_method
   
   type                    = "HTTP_PROXY"
-  uri                     = "http://${aws_lb.user_service.dns_name}/users"
   integration_http_method = "ANY"
+  uri                     = "http://${aws_lb.user_service.dns_name}/users"
   
-  connection_type = "INTERNET"
-  timeout_milliseconds = 29000  # 29 segundos (maximo permitido)
+  # CLAVE: Usar VPC Link para conectarse con recursos internos
+  connection_type = "VPC_LINK"
+  connection_id   = aws_api_gateway_vpc_link.main.id
 }
 
-# CORS para usuarios
-resource "aws_api_gateway_method" "users_options" {
-  rest_api_id   = aws_api_gateway_rest_api.main.id
-  resource_id   = aws_api_gateway_resource.users.id
-  http_method   = "OPTIONS"
-  authorization = "NONE"
-}
-
-resource "aws_api_gateway_integration" "users_options" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.users.id
-  http_method = aws_api_gateway_method.users_options.http_method
-  
-  type = "MOCK"
-  
-  request_templates = {
-    "application/json" = "{\"statusCode\": 200}"
-  }
-}
-
-resource "aws_api_gateway_method_response" "users_options_200" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.users.id
-  http_method = aws_api_gateway_method.users_options.http_method
-  status_code = "200"
-  
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = true,
-    "method.response.header.Access-Control-Allow-Methods" = true,
-    "method.response.header.Access-Control-Allow-Origin" = true
-  }
-}
-
-resource "aws_api_gateway_integration_response" "users_options" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.users.id
-  http_method = aws_api_gateway_method.users_options.http_method
-  status_code = aws_api_gateway_method_response.users_options_200.status_code
-  
-  response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Requested-With,Accept'",
-    "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS,PATCH'",
-    "method.response.header.Access-Control-Allow-Origin" = "'*'"
-  }
-}
-
-# HTTP PROXY para endpoint de productos
+# Metodos ANY para Products
 resource "aws_api_gateway_method" "products_any" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.products.id
@@ -869,31 +751,68 @@ resource "aws_api_gateway_integration" "products_any" {
   http_method = aws_api_gateway_method.products_any.http_method
   
   type                    = "HTTP_PROXY"
-  uri                     = "http://${aws_lb.product_service.dns_name}/products"
   integration_http_method = "ANY"
+  uri                     = "http://${aws_lb.product_service.dns_name}/products"
   
-  connection_type = "INTERNET"
-  timeout_milliseconds = 29000  # 29 segundos (maximo permitido)
+  # CLAVE: Usar VPC Link para conectarse con recursos internos
+  connection_type = "VPC_LINK"
+  connection_id   = aws_api_gateway_vpc_link.main.id
 }
 
-# CORS para productos
+# Configuracion de CORS
+resource "aws_api_gateway_method" "users_options" {
+  rest_api_id   = aws_api_gateway_rest_api.main.id
+  resource_id   = aws_api_gateway_resource.users.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_method_response" "users_options_200" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.users.id
+  http_method = aws_api_gateway_method.users_options.http_method
+  status_code = "200"
+  
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true,
+    "method.response.header.Access-Control-Allow-Methods" = true,
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+  
+  response_models = {
+    "application/json" = "Empty"
+  }
+}
+
+resource "aws_api_gateway_integration" "users_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.users.id
+  http_method = aws_api_gateway_method.users_options.http_method
+  type        = "MOCK"
+  
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
+  }
+}
+
+resource "aws_api_gateway_integration_response" "users_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.users.id
+  http_method = aws_api_gateway_method.users_options.http_method
+  status_code = aws_api_gateway_method_response.users_options_200.status_code
+  
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
+    "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS'",
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
+  }
+}
+
 resource "aws_api_gateway_method" "products_options" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.products.id
   http_method   = "OPTIONS"
   authorization = "NONE"
-}
-
-resource "aws_api_gateway_integration" "products_options" {
-  rest_api_id = aws_api_gateway_rest_api.main.id
-  resource_id = aws_api_gateway_resource.products.id
-  http_method = aws_api_gateway_method.products_options.http_method
-  
-  type = "MOCK"
-  
-  request_templates = {
-    "application/json" = "{\"statusCode\": 200}"
-  }
 }
 
 resource "aws_api_gateway_method_response" "products_options_200" {
@@ -905,7 +824,22 @@ resource "aws_api_gateway_method_response" "products_options_200" {
   response_parameters = {
     "method.response.header.Access-Control-Allow-Headers" = true,
     "method.response.header.Access-Control-Allow-Methods" = true,
-    "method.response.header.Access-Control-Allow-Origin" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+  
+  response_models = {
+    "application/json" = "Empty"
+  }
+}
+
+resource "aws_api_gateway_integration" "products_options" {
+  rest_api_id = aws_api_gateway_rest_api.main.id
+  resource_id = aws_api_gateway_resource.products.id
+  http_method = aws_api_gateway_method.products_options.http_method
+  type        = "MOCK"
+  
+  request_templates = {
+    "application/json" = "{\"statusCode\": 200}"
   }
 }
 
@@ -916,20 +850,20 @@ resource "aws_api_gateway_integration_response" "products_options" {
   status_code = aws_api_gateway_method_response.products_options_200.status_code
   
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'",
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'",
     "method.response.header.Access-Control-Allow-Methods" = "'GET,POST,PUT,DELETE,OPTIONS'",
-    "method.response.header.Access-Control-Allow-Origin" = "'*'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'*'"
   }
 }
 
-# PROXY PARA GESTIONAR RUTAS ANIDADAS
+# Proxy con parametros para subrutas
 resource "aws_api_gateway_resource" "users_proxy" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   parent_id   = aws_api_gateway_resource.users.id
   path_part   = "{proxy+}"
 }
 
-resource "aws_api_gateway_method" "users_proxy_any" {
+resource "aws_api_gateway_method" "users_proxy" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.users_proxy.id
   http_method   = "ANY"
@@ -940,17 +874,17 @@ resource "aws_api_gateway_method" "users_proxy_any" {
   }
 }
 
-resource "aws_api_gateway_integration" "users_proxy_any" {
+resource "aws_api_gateway_integration" "users_proxy" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   resource_id = aws_api_gateway_resource.users_proxy.id
-  http_method = aws_api_gateway_method.users_proxy_any.http_method
+  http_method = aws_api_gateway_method.users_proxy.http_method
   
   type                    = "HTTP_PROXY"
-  uri                     = "http://${aws_lb.user_service.dns_name}/users/{proxy}"
   integration_http_method = "ANY"
+  uri                     = "http://${aws_lb.user_service.dns_name}/users/{proxy}"
   
-  # No necesitamos VPC Link con ALBs publicos
-  connection_type = "INTERNET"
+  connection_type = "VPC_LINK"
+  connection_id   = aws_api_gateway_vpc_link.main.id
   
   request_parameters = {
     "integration.request.path.proxy" = "method.request.path.proxy"
@@ -963,7 +897,7 @@ resource "aws_api_gateway_resource" "products_proxy" {
   path_part   = "{proxy+}"
 }
 
-resource "aws_api_gateway_method" "products_proxy_any" {
+resource "aws_api_gateway_method" "products_proxy" {
   rest_api_id   = aws_api_gateway_rest_api.main.id
   resource_id   = aws_api_gateway_resource.products_proxy.id
   http_method   = "ANY"
@@ -974,36 +908,41 @@ resource "aws_api_gateway_method" "products_proxy_any" {
   }
 }
 
-resource "aws_api_gateway_integration" "products_proxy_any" {
+resource "aws_api_gateway_integration" "products_proxy" {
   rest_api_id = aws_api_gateway_rest_api.main.id
   resource_id = aws_api_gateway_resource.products_proxy.id
-  http_method = aws_api_gateway_method.products_proxy_any.http_method
+  http_method = aws_api_gateway_method.products_proxy.http_method
   
   type                    = "HTTP_PROXY"
-  uri                     = "http://${aws_lb.product_service.dns_name}/products/{proxy}"
   integration_http_method = "ANY"
+  uri                     = "http://${aws_lb.product_service.dns_name}/products/{proxy}"
   
-  # No necesitamos VPC Link con ALBs publicos
-  connection_type = "INTERNET"
+  connection_type = "VPC_LINK"
+  connection_id   = aws_api_gateway_vpc_link.main.id
   
   request_parameters = {
     "integration.request.path.proxy" = "method.request.path.proxy"
   }
 }
 
-# Despliegue de API
+# API Gateway Deployment
 resource "aws_api_gateway_deployment" "main" {
   depends_on = [
     aws_api_gateway_integration.users_any,
     aws_api_gateway_integration.products_any,
+    aws_api_gateway_integration.users_proxy,
+    aws_api_gateway_integration.products_proxy,
     aws_api_gateway_integration.users_options,
-    aws_api_gateway_integration.products_options,
-    aws_api_gateway_integration.users_proxy_any,
-    aws_api_gateway_integration.products_proxy_any
+    aws_api_gateway_integration.products_options
   ]
   
   rest_api_id = aws_api_gateway_rest_api.main.id
   stage_name  = var.environment
+  
+  variables = {
+    # Esta variable fuerza una nueva implementacion cuando cambia
+    deployed_at = timestamp()
+  }
   
   lifecycle {
     create_before_destroy = true

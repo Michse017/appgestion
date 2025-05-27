@@ -5,22 +5,43 @@ WORKDIR /app
 # Instalar dependencias necesarias
 RUN apt-get update && apt-get install -y \
     postgresql-client \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
+
+# Crear script de espera
+RUN echo '#!/bin/bash \n\
+echo "Esperando por la base de datos..." \n\
+max_attempts=${DB_MAX_RETRIES:-30} \n\
+retry_interval=${DB_RETRY_INTERVAL:-5} \n\
+attempt=1 \n\
+until PGPASSWORD=$POSTGRES_PASSWORD pg_isready -h $POSTGRES_HOST -p $POSTGRES_PORT -U $POSTGRES_USER -d $POSTGRES_DB -t 5; do \n\
+  echo "Intento $attempt/$max_attempts: Conexión a PostgreSQL fallida, reintentando en $retry_interval segundos..." \n\
+  sleep $retry_interval \n\
+  attempt=$((attempt+1)) \n\
+  if [ $attempt -gt $max_attempts ]; then \n\
+    echo "No se pudo conectar a PostgreSQL después de $max_attempts intentos. Continuando de todas formas." \n\
+    break \n\
+  fi \n\
+done \n\
+echo "Iniciando aplicación..." \n\
+exec gunicorn --bind 0.0.0.0:$PORT --workers 2 --log-level info --timeout 120 app:app' > /app/entrypoint.sh
+
+RUN chmod +x /app/entrypoint.sh
 
 # Copiar y instalar dependencias Python
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt gunicorn
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar código de la aplicación
 COPY app.py .
 
 # Configurar variables de entorno
-ENV POSTGRES_USER=dbadmin \
+ENV PORT=3002 \
+    POSTGRES_USER=dbadmin \
     POSTGRES_PASSWORD=placeholder_password \
     POSTGRES_HOST=localhost \
     POSTGRES_PORT=5432 \
     POSTGRES_DB=product_db \
-    PORT=3002 \
     DB_MAX_RETRIES=30 \
     DB_RETRY_INTERVAL=5 \
     PYTHONUNBUFFERED=1
@@ -28,5 +49,5 @@ ENV POSTGRES_USER=dbadmin \
 # Exponer el puerto del servicio
 EXPOSE 3002
 
-# Comando para iniciar el servicio con Gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:3002", "--workers", "2", "--log-level", "info", "--timeout", "120", "app:app"]
+# Comando para iniciar el servicio
+CMD ["/app/entrypoint.sh"]

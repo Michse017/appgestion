@@ -1,5 +1,5 @@
 #!/bin/bash
-# deploy.sh - Script simplificado para desplegar la infraestructura
+# deploy.sh - Script mejorado para desplegar la infraestructura
 
 set -e
 
@@ -38,30 +38,13 @@ if ! aws ec2 describe-key-pairs --key-name "$SSH_KEY_NAME" &>/dev/null; then
   exit 1
 fi
 
-# AQUÍ ESTÁ LA CORRECCIÓN - Preguntar explícitamente si quiere construir imágenes
+# Preguntar si quiere construir imágenes
 echo -e "${YELLOW}¿Desea construir y publicar imágenes Docker? (s/n)${NC}"
 read -r response
 
 if [[ "$response" =~ ^([sS][iI]|[sS])$ ]]; then
-  # Si la respuesta es sí, construir imágenes
   echo -e "${YELLOW}Construyendo y publicando imágenes Docker...${NC}"
   bash "$PROJECT_ROOT/infrastructure/build_images.sh" || exit 1
-else
-  # Si la respuesta es no, verificar que las imágenes existen
-  DOCKERHUB_USER=$(grep dockerhub_username "$TERRAFORM_DIR/terraform.tfvars" | cut -d '"' -f2)
-  for service in "user-service" "product-service"; do
-    if ! docker pull "${DOCKERHUB_USER}/appgestion-${service}:latest" &>/dev/null; then
-      echo -e "${RED}Error: La imagen ${DOCKERHUB_USER}/appgestion-${service}:latest no existe${NC}"
-      echo -e "${YELLOW}¿Desea construir las imágenes ahora? (s/n)${NC}"
-      read -r build_now
-      if [[ "$build_now" =~ ^([sS][iI]|[sS])$ ]]; then
-        bash "$PROJECT_ROOT/infrastructure/build_images.sh" || exit 1
-      else
-        exit 1
-      fi
-      break  # Salir del loop si ya se construyeron las imágenes
-    fi
-  done
 fi
 
 # Ejecutar Terraform
@@ -85,6 +68,8 @@ echo -e "${GREEN}=== Obteniendo datos de salida ===${NC}"
 API_URL=$(terraform output -raw api_gateway_invoke_url)
 FRONTEND_URL=$(terraform output -raw frontend_cloudfront_domain)
 S3_BUCKET=$(terraform output -raw frontend_bucket_name)
+USER_SERVICE_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=${var.project_name}-user-service" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
+PRODUCT_SERVICE_IP=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=${var.project_name}-product-service" --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
 
 # Actualizar frontend con URL real de API
 cd "$PROJECT_ROOT/frontend"
@@ -99,11 +84,13 @@ if [ -n "$DISTRIBUTION_ID" ]; then
   aws cloudfront create-invalidation --distribution-id $DISTRIBUTION_ID --paths "/*"
 fi
 
-# CORRECCIÓN: Volver al directorio raíz antes de verificar
-cd "$PROJECT_ROOT"
-
-# Añadir espera para verificación después del despliegue
+# Esperar a que los servicios estén disponibles
 echo -e "${YELLOW}Esperando 5 minutos para que los recursos se inicialicen...${NC}"
+echo -e "${YELLOW}Mientras tanto, aquí están las direcciones IP de los servidores:${NC}"
+echo -e "User Service: ${USER_SERVICE_IP}"
+echo -e "Product Service: ${PRODUCT_SERVICE_IP}"
+echo -e "${YELLOW}Puedes conectarte usando: ssh -i ~/ruta/a/tu-clave.pem ubuntu@IP${NC}"
+
 sleep 300
 
 # Ejecutar script de verificación con manejo de errores
@@ -130,4 +117,9 @@ echo -e "${GREEN}=== Despliegue completado ===${NC}"
 echo -e "Frontend: https://${FRONTEND_URL}"
 echo -e "API Gateway: ${API_URL}"
 echo -e "${YELLOW}Importante: Los servicios pueden tardar ~5-10 minutos en estar completamente disponibles${NC}"
+echo -e "${YELLOW}Para verificar el estado de los servicios, conéctate por SSH a los servidores y ejecuta:${NC}"
+echo -e "  sudo docker ps"
+echo -e "  sudo docker logs user-service"
+echo -e "  sudo docker logs product-service"
+echo -e "  bash /home/ubuntu/diagnose.sh"
 echo -e "${YELLOW}Para eliminar recursos: cd $TERRAFORM_DIR && terraform destroy -auto-approve${NC}"
