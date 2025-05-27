@@ -273,7 +273,7 @@ resource "aws_instance" "user_service" {
     connection {
       type        = "ssh"
       user        = "ubuntu"
-      private_key = file(var.ssh_private_key_path)
+      private_key = file(var.ssh_key_path)
       host        = self.public_ip
     }
   }
@@ -285,7 +285,7 @@ resource "aws_instance" "user_service" {
     connection {
       type        = "ssh"
       user        = "ubuntu"
-      private_key = file(var.ssh_private_key_path)
+      private_key = file(var.ssh_key_path)
       host        = self.public_ip
     }
   }
@@ -310,7 +310,7 @@ resource "aws_instance" "product_service" {
     connection {
       type        = "ssh"
       user        = "ubuntu"
-      private_key = file(var.ssh_private_key_path)
+      private_key = file(var.ssh_key_path)
       host        = self.public_ip
     }
   }
@@ -322,7 +322,7 @@ resource "aws_instance" "product_service" {
     connection {
       type        = "ssh"
       user        = "ubuntu"
-      private_key = file(var.ssh_private_key_path)
+      private_key = file(var.ssh_key_path)
       host        = self.public_ip
     }
   }
